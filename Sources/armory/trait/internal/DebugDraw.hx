@@ -13,23 +13,24 @@ import kha.graphics4.CompareMode;
 import kha.graphics4.CullMode;
 import iron.math.Vec4;
 import iron.math.Mat4;
+using armory.object.TransformExtension;
 
 class DebugDraw {
 
-	static var inst:DebugDraw = null;
+	static var inst: DebugDraw = null;
 
-	public var color = 0xffff0000;
+	public var color: kha.Color = 0xffff0000;
 	public var strength = 0.02;
 
-	var vertexBuffer:VertexBuffer;
-	var indexBuffer:IndexBuffer;
-	var pipeline:PipelineState;
+	var vertexBuffer: VertexBuffer;
+	var indexBuffer: IndexBuffer;
+	var pipeline: PipelineState;
 
-	var vp:Mat4;
-	var vpID:ConstantLocation;
+	var vp: Mat4;
+	var vpID: ConstantLocation;
 
-	var vbData:kha.arrays.Float32Array;
-	var ibData:kha.arrays.Uint32Array;
+	var vbData: kha.arrays.Float32Array;
+	var ibData: kha.arrays.Uint32Array;
 
 	static inline var maxLines = 300;
 	static inline var maxVertices = maxLines * 4;
@@ -38,7 +39,7 @@ class DebugDraw {
 
 	function new() {
 		inst = this;
-		
+
 		var structure = new VertexStructure();
 		structure.add("pos", VertexData.Float3);
 		structure.add("col", VertexData.Float3);
@@ -54,18 +55,18 @@ class DebugDraw {
 		pipeline.depthMode = CompareMode.Less;
 		pipeline.cullMode = CullMode.None;
 		pipeline.compile();
-		vpID = pipeline.getConstantLocation("VP");
+		vpID = pipeline.getConstantLocation("ViewProjection");
 		vp = Mat4.identity();
 
 		vertexBuffer = new VertexBuffer(maxVertices, structure, Usage.DynamicUsage);
 		indexBuffer = new IndexBuffer(maxIndices, Usage.DynamicUsage);
 	}
 
-	static var g:kha.graphics4.Graphics;
+	static var g: kha.graphics4.Graphics;
 
-	public static function notifyOnRender(f:DebugDraw->Void) {
+	public static function notifyOnRender(f: DebugDraw->Void) {
 		if (inst == null) inst = new DebugDraw();
-		iron.RenderPath.notifyOnContext("mesh", function(g4:kha.graphics4.Graphics, i:Int, len:Int) {
+		iron.RenderPath.notifyOnContext("mesh", function(g4: kha.graphics4.Graphics, i: Int, len: Int) {
 			g = g4;
 			if (i == 0) inst.begin();
 			f(inst);
@@ -73,19 +74,19 @@ class DebugDraw {
 		});
 	}
 
-	static var v:Vec4;
+	static var objPosition: Vec4;
 	static var vx = new Vec4();
 	static var vy = new Vec4();
 	static var vz = new Vec4();
-	public function bounds(t:iron.object.Transform) {
-		v = t.world.getLoc();
-		var dx = t.dim.x / 2;
-		var dy = t.dim.y / 2;
-		var dz = t.dim.z / 2;
-		
-		var up = t.world.up();
-		var look = t.world.look();
-		var right = t.world.right();
+	public function bounds(transform: iron.object.Transform) {
+		objPosition = transform.getWorldPosition();
+		var dx = transform.dim.x / 2;
+		var dy = transform.dim.y / 2;
+		var dz = transform.dim.z / 2;
+
+		var up = transform.world.up();
+		var look = transform.world.look();
+		var right = transform.world.right();
 		up.normalize();
 		look.normalize();
 		right.normalize();
@@ -96,7 +97,7 @@ class DebugDraw {
 		vy.mult(dy);
 		vz.setFrom(up);
 		vz.mult(dz);
-		
+
 		lineb(-1, -1, -1,  1, -1, -1);
 		lineb(-1,  1, -1,  1,  1, -1);
 		lineb(-1, -1,  1,  1, -1,  1);
@@ -116,13 +117,13 @@ class DebugDraw {
 	static var v1 = new Vec4();
 	static var v2 = new Vec4();
 	static var t = new Vec4();
-	function lineb(a:Int, b:Int, c:Int, d:Int, e:Int, f:Int) {
-		v1.setFrom(v);
+	function lineb(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int) {
+		v1.setFrom(objPosition);
 		t.setFrom(vx); t.mult(a); v1.add(t);
 		t.setFrom(vy); t.mult(b); v1.add(t);
 		t.setFrom(vz); t.mult(c); v1.add(t);
 
-		v2.setFrom(v);
+		v2.setFrom(objPosition);
 		t.setFrom(vx); t.mult(d); v2.add(t);
 		t.setFrom(vy); t.mult(e); v2.add(t);
 		t.setFrom(vz); t.mult(f); v2.add(t);
@@ -130,54 +131,56 @@ class DebugDraw {
 		linev(v1, v2);
 	}
 
-	public inline function linev(v1:Vec4, v2:Vec4) {
+	public inline function linev(v1: Vec4, v2: Vec4) {
 		line(v1.x, v1.y, v1.z, v2.x, v2.y, v2.z);
 	}
 
-	public function line(x1:Float, y1:Float, z1:Float, x2:Float, y2:Float, z2:Float) {
-		
+	static var midPoint = new Vec4();
+	static var midLine = new Vec4();
+	static var corner1 = new Vec4();
+	static var corner2 = new Vec4();
+	static var corner3 = new Vec4();
+	static var corner4 = new Vec4();
+	static var cameraLook = new Vec4();
+	public function line(x1: Float, y1: Float, z1: Float, x2: Float, y2: Float, z2: Float) {
+
 		if (lines >= maxLines) { end(); begin(); }
 
+		midPoint.set(x1 + x2, y1 + y2, z1 + z2);
+		midPoint.mult(0.5);
+		
+		midLine.set(x1, y1, z1);
+		midLine.sub(midPoint);
+
 		var camera = iron.Scene.active.camera;
-		var l = camera.right();
-		l.add(camera.up());
+		cameraLook = camera.transform.getWorldPosition();
+		cameraLook.sub(midPoint);
+
+		var lineWidth = cameraLook.cross(midLine);
+		lineWidth.normalize();
+		lineWidth.mult(strength);
+
+		corner1.set(x1, y1, z1).add(lineWidth);
+		corner2.set(x1, y1, z1).sub(lineWidth);
+		corner3.set(x2, y2, z2).sub(lineWidth);
+		corner4.set(x2, y2, z2).add(lineWidth);
 
 		var i = lines * 24; // 4 * 6 (structure len)
-		vbData.set(i + 0, x1);
-		vbData.set(i + 1, y1);
-		vbData.set(i + 2, z1);
-		vbData.set(i + 3, 1.0);
-		vbData.set(i + 4, 0.0);
-		vbData.set(i + 5, 0.0);
-
-		vbData.set(i + 6, x2);
-		vbData.set(i + 7, y2);
-		vbData.set(i + 8, z2);
-		vbData.set(i + 9, 1.0);
-		vbData.set(i + 10, 0.0);
-		vbData.set(i + 11, 0.0);
-
-		vbData.set(i + 12, x2 + strength * l.x);
-		vbData.set(i + 13, y2 + strength * l.y);
-		vbData.set(i + 14, z2 + strength * l.z);
-		vbData.set(i + 15, 1.0);
-		vbData.set(i + 16, 0.0);
-		vbData.set(i + 17, 0.0);
-
-		vbData.set(i + 18, x1 + strength * l.x);
-		vbData.set(i + 19, y1 + strength * l.y);
-		vbData.set(i + 20, z1 + strength * l.z);
-		vbData.set(i + 21, 1.0);
-		vbData.set(i + 22, 0.0);
-		vbData.set(i + 23, 0.0);
+		addVbData(i, [corner1.x, corner1.y, corner1.z, color.R, color.G, color.B]);
+		i += 6;
+		addVbData(i, [corner2.x, corner2.y, corner2.z, color.R, color.G, color.B]);
+		i += 6;
+		addVbData(i, [corner3.x, corner3.y, corner3.z, color.R, color.G, color.B]);
+		i += 6;
+		addVbData(i, [corner4.x, corner4.y, corner4.z, color.R, color.G, color.B]);
 
 		i = lines * 6;
-		ibData[i + 0] = lines * 4 + 0;
+		ibData[i    ] = lines * 4;
 		ibData[i + 1] = lines * 4 + 1;
 		ibData[i + 2] = lines * 4 + 2;
 		ibData[i + 3] = lines * 4 + 2;
 		ibData[i + 4] = lines * 4 + 3;
-		ibData[i + 5] = lines * 4 + 0;
+		ibData[i + 5] = lines * 4;
 
 		lines++;
 	}
@@ -191,7 +194,7 @@ class DebugDraw {
 	function end() {
 		vertexBuffer.unlock();
 		indexBuffer.unlock();
-		
+
 		g.setVertexBuffer(vertexBuffer);
 		g.setIndexBuffer(indexBuffer);
 		g.setPipeline(pipeline);
@@ -200,6 +203,12 @@ class DebugDraw {
 		vp.multmat(camera.P);
 		g.setMatrix(vpID, vp.self);
 		g.drawIndexedVertices(0, lines * 6);
+	}
+
+	inline function addVbData(i: Int, data: Array<Float>) {
+		for (offset in 0...6) {
+			vbData.set(i + offset, data[offset]);
+		}
 	}
 }
 

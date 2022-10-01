@@ -9,25 +9,24 @@ import iron.math.Quat;
 
 class Character extends Trait {
 
-	var actionIdle:String;
-	var actionMove:String;
-	var currentAction:String;
-	var animation:Animation;
+	var currentAction: String;
+	var animation: Animation;
 
 	var speed = 0.0;
-	var loc:Vec4 = new Vec4();
-	var lastLoc:Vec4 = null;
+	var loc: Vec4 = new Vec4();
+	var lastLoc: Vec4 = null;
 	var framesIdle = 0; // Number of frames character did not move
 
-	public function new(actionIdle:String, actionMove:String) {
+	@:prop
+	var actionIdle: String = "idle";
+
+	@:prop
+	var actionMove: String = "run";
+
+	public function new() {
 		super();
 
-		if(actionIdle != null && actionMove != null){
-			this.actionIdle = actionIdle;
-			this.actionMove = actionMove;
-			currentAction = actionIdle;
-		}
-		
+		currentAction = actionIdle;
 		notifyOnInit(init);
 	}
 
@@ -36,7 +35,7 @@ class Character extends Trait {
 
 		// Try first child if we are running from armature
 		if (animation == null) {
-			if(object.children.length > 0) {
+			if (object.children.length > 0) {
 				animation = object.children[0].animation;
 			}
 		}
@@ -69,9 +68,7 @@ class Character extends Trait {
 
 			if (actionMove != null) animation.play(actionMove);
 		}
-
-		// Otherwise if state is walking and character is idle, play idle animation
-		else if (currentAction == actionMove && framesIdle > 2) {
+		else if (currentAction == actionMove && framesIdle > 2) { // Otherwise if state is walking and character is idle, play idle animation
 			currentAction = actionIdle;
 
 			if (actionIdle != null) animation.play(actionIdle);

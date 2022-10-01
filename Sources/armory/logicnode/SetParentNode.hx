@@ -1,30 +1,28 @@
 package armory.logicnode;
 
 import iron.object.Object;
+import armory.trait.physics.RigidBody;
 
 class SetParentNode extends LogicNode {
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-		var object:Object = inputs[1].get();
+	override function run(from: Int) {
+		var object: Object = inputs[1].get();
+		var parentObject: Object = inputs[2].get();
+		var keepTransform: Bool = inputs[3].get();
+		var parentInverse: Bool = inputs[4].get();
 
-		var parent:Object;
-		var isUnparent = false;
-		if (Std.is(inputs[2].node, ObjectNode)) {
-			var parentNode = cast(inputs[2].node, ObjectNode);
-			isUnparent = parentNode.objectName == "";
-		}
-		if (isUnparent) parent = iron.Scene.active.root;
-		else parent = inputs[2].get();
-		
-		if (object == null || parent == null || object.parent == parent) return;
+		if (object == null || parentObject == null || object.parent == parentObject) return;
 
-		object.parent.removeChild(object, isUnparent); // keepTransform
-		parent.addChild(object, !isUnparent); // applyInverse
+		#if arm_physics
+		var rigidBody = object.getTrait(RigidBody);
+		if (rigidBody != null) rigidBody.setActivationState(0);
+		#end
 
-		super.run();
+		object.setParent(parentObject, parentInverse, keepTransform);
+		runOutput(0);
 	}
 }

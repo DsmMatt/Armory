@@ -1,62 +1,15 @@
 package armory.system;
 
 import armory.logicnode.*;
-import armory.system.Cycles;
-
-// typedef TNodeCanvas = {
-// 	var nodes: Array<TNode>;
-// 	var links: Array<TNodeLink>;
-// }
-
-// typedef TNode = {
-// 	var id: Int;
-// 	var name: String;
-// 	var type: String;
-// 	var x: Float;
-// 	var y: Float;
-// 	var inputs: Array<TNodeSocket>;
-// 	var outputs: Array<TNodeSocket>;
-// 	var buttons: Array<TNodeButton>;
-// 	var color: Int;
-// }
-
-// typedef TNodeSocket = {
-// 	var id: Int;
-// 	var node_id: Int;
-// 	var name: String;
-// 	var type: String;
-// 	var color: Int;
-// 	var default_value: Dynamic;
-// 	@:optional var min: Null<Float>;
-// 	@:optional var max: Null<Float>;
-// }
-
-// typedef TNodeLink = {
-// 	var id: Int;
-// 	var from_id: Int;
-// 	var from_socket: Int;
-// 	var to_id: Int;
-// 	var to_socket: Int;
-// }
-
-// typedef TNodeButton = {
-// 	var name: String;
-// 	var type: String;
-// 	var output: Int;
-// 	@:optional var default_value: Dynamic;
-// 	@:optional var data: Array<String>;
-// 	@:optional var min: Null<Float>;
-// 	@:optional var max: Null<Float>;
-// }
 
 class Logic {
 
-	static var nodes:Array<TNode>;
-	static var links:Array<TNodeLink>;
+	static var nodes: Array<TNode>;
+	static var links: Array<TNodeLink>;
 
-	static var parsed_nodes:Array<String> = null;
-	static var parsed_labels:Map<String, String> = null;
-	static var nodeMap:Map<String, armory.logicnode.LogicNode>;
+	static var parsed_nodes: Array<String> = null;
+	static var parsed_labels: Map<String, String> = null;
+	static var nodeMap: Map<String, armory.logicnode.LogicNode>;
 
 	public static var packageName = "armory.logicnode";
 
@@ -93,17 +46,17 @@ class Logic {
 		return res;
 	}
 
-	static function safesrc(s:String):String {
-		return StringTools.replace(s, ' ', '');
+	static function safesrc(s: String): String {
+		return StringTools.replace(s, " ", "");
 	}
 
-	static function node_name(node:TNode):String {
+	static function node_name(node: TNode): String {
 		var s = safesrc(node.name) + node.id;
 		return s;
 	}
 
-	static var tree:armory.logicnode.LogicTree;
-	public static function parse(canvas:TNodeCanvas, onAdd = true):armory.logicnode.LogicTree {
+	static var tree: armory.logicnode.LogicTree;
+	public static function parse(canvas: TNodeCanvas, onAdd = true): armory.logicnode.LogicTree {
 
 		nodes = canvas.nodes;
 		links = canvas.links;
@@ -125,19 +78,10 @@ class Logic {
 		return tree;
 	}
 
-	static function build_node(node:TNode):String {
+	static function build_node(node: TNode): String {
 
 		// Get node name
 		var name =  node_name(node);
-
-		// Link nodes using labels
-		// if (node.label != '') {
-			// var l = parsed_labels.get(node.label);
-			// if (l != null) {
-				// return l;
-			// }
-			// parsed_labels.set(node.label, name);
-		// }
 
 		// Check if node already exists
 		if (parsed_nodes.indexOf(name) != -1) {
@@ -150,18 +94,26 @@ class Logic {
 		var v = createClassInstance(node.type, [tree]);
 		nodeMap.set(name, v);
 
+		#if arm_patch
+		tree.nodes.set(name, v);
+		#end
+
 		// Properties
 		for (i in 0...5) {
 			for (b in node.buttons) {
-				if (b.name == 'property' + i) {
+				if (b.name == "property" + i) {
 					Reflect.setProperty(v, b.name, b.data[b.default_value]);
 				}
 			}
 		}
-		
+
+		@:privateAccess v.preallocInputs(node.inputs.length);
+		@:privateAccess v.preallocOutputs(node.outputs.length);
+
 		// Create inputs
-		var inp_node:armory.logicnode.LogicNode = null;
+		var inp_node: armory.logicnode.LogicNode = null;
 		var inp_from = 0;
+		var from_type: String;
 		for (i in 0...node.inputs.length) {
 			var inp = node.inputs[i];
 			// Is linked - find node
@@ -173,43 +125,48 @@ class Logic {
 				for (i in 0...n.outputs.length) {
 					if (n.outputs[i] == socket) {
 						inp_from = i;
+						from_type = socket.type;
 						break;
 					}
 				}
 			}
-			// Not linked - create node with default values
-			else {
+			else { // Not linked - create node with default values
 				inp_node = build_default_node(inp);
 				inp_from = 0;
+				from_type = inp.type;
 			}
 			// Add input
-			v.addInput(inp_node, inp_from);
+			var link = LogicNode.addLink(inp_node, v, inp_from, i);
+			#if arm_patch
+			link.fromType = from_type;
+			link.toType = inp.type;
+			link.toValue = getSocketDefaultValue(inp);
+			#end
 		}
 
 		// Create outputs
-		for (out in node.outputs) {
-			var outNodes:Array<armory.logicnode.LogicNode> = [];
+		for (i in 0...node.outputs.length) {
+			var out = node.outputs[i];
 			var ls = getOutputLinks(out);
-			if (ls != null && ls.length > 0) {
-				for (l in ls) {
-					var n = getNode(l.to_id);
-					var out_name = build_node(n);
-					outNodes.push(nodeMap.get(out_name));
-				}
+
+			// Linked outputs are already handled after iterating over inputs
+			// above, so only unconnected outputs are handled here
+			if (ls == null || ls.length == 0) {
+				var link = LogicNode.addLink(v, build_default_node(out), i, 0);
+
+				#if arm_patch
+				link.fromType = out.type;
+				link.toType = out.type;
+				link.toValue = getSocketDefaultValue(out);
+				#end
 			}
-			// Not linked - create node with default values
-			else {
-				outNodes.push(build_default_node(out));
-			}
-			// Add outputs
-			v.addOutputs(outNodes);
 		}
 
 		return name;
 	}
-		
-	static function get_root_nodes(node_group:TNodeCanvas):Array<TNode> {
-		var roots:Array<TNode> = [];
+
+	static function get_root_nodes(node_group: TNodeCanvas): Array<TNode> {
+		var roots: Array<TNode> = [];
 		for (node in node_group.nodes) {
 			// if (node.bl_idname == 'NodeUndefined') {
 				// arm.log.warn('Undefined logic nodes in ' + node_group.name)
@@ -230,49 +187,112 @@ class Logic {
 		return roots;
 	}
 
-	static function build_default_node(inp:TNodeSocket):armory.logicnode.LogicNode {
-		
-		var v:armory.logicnode.LogicNode = null;
-		
-		if (inp.type == 'ACTION') {
-			v = createClassInstance('NullNode', [tree]);
+	static function build_default_node(inp: TNodeSocket): armory.logicnode.LogicNode {
+
+		var v: armory.logicnode.LogicNode = null;
+
+		if (inp.type == "OBJECT") {
+			v = createClassInstance("ObjectNode", [tree, inp.default_value]);
 		}
-		else if (inp.type == 'OBJECT') {
-			v = createClassInstance('ObjectNode', [tree, inp.default_value]);
+		else if (inp.type == "ANIMACTION") {
+			v = createClassInstance("StringNode", [tree, inp.default_value]);
 		}
-		else if (inp.type == 'ANIMACTION') {
-			v = createClassInstance('StringNode', [tree, inp.default_value]);
-		}
-		else if (inp.type == 'VECTOR') {
+		else if (inp.type == "VECTOR") {
 			if (inp.default_value == null) inp.default_value = [0, 0, 0]; // TODO
-			v = createClassInstance('VectorNode', [tree, inp.default_value[0], inp.default_value[1], inp.default_value[2]]);
+			v = createClassInstance("VectorNode", [tree, inp.default_value[0], inp.default_value[1], inp.default_value[2]]);
 		}
-		else if (inp.type == 'RGBA') {
+		else if (inp.type == "RGBA") {
 			if (inp.default_value == null) inp.default_value = [0, 0, 0]; // TODO
-			v = createClassInstance('ColorNode', [tree, inp.default_value[0], inp.default_value[1], inp.default_value[2], inp.default_value[3]]);
+			v = createClassInstance("ColorNode", [tree, inp.default_value[0], inp.default_value[1], inp.default_value[2], inp.default_value[3]]);
 		}
-		else if (inp.type == 'RGB') {
+		else if (inp.type == "RGB") {
 			if (inp.default_value == null) inp.default_value = [0, 0, 0]; // TODO
-			v = createClassInstance('ColorNode', [tree, inp.default_value[0], inp.default_value[1], inp.default_value[2]]);
+			v = createClassInstance("ColorNode", [tree, inp.default_value[0], inp.default_value[1], inp.default_value[2]]);
 		}
-		else if (inp.type == 'VALUE') { 
-			v = createClassInstance('FloatNode', [tree, inp.default_value]);
+		else if (inp.type == "VALUE") {
+			v = createClassInstance("FloatNode", [tree, inp.default_value]);
 		}
-		else if (inp.type == 'INT') {
-			v = createClassInstance('IntegerNode', [tree, inp.default_value]);
+		else if (inp.type == "INT") {
+			v = createClassInstance("IntegerNode", [tree, inp.default_value]);
 		}
-		else if (inp.type == 'BOOLEAN') {
-			v = createClassInstance('BooleanNode', [tree, inp.default_value]);
+		else if (inp.type == "BOOLEAN") {
+			v = createClassInstance("BooleanNode", [tree, inp.default_value]);
 		}
-		else if (inp.type == 'STRING') {
-			v = createClassInstance('StringNode', [tree, inp.default_value]);
+		else if (inp.type == "STRING") {
+			v = createClassInstance("StringNode", [tree, inp.default_value]);
+		}
+		else { // ACTION, ARRAY
+			v = createClassInstance("NullNode", [tree]);
 		}
 		return v;
 	}
 
-	static function createClassInstance(className:String, args:Array<Dynamic>):Dynamic {
-		var cname = Type.resolveClass(packageName + '.' + className);
+	static function getSocketDefaultValue(socket: TNodeSocket): Any {
+
+		var v: armory.logicnode.LogicNode = null;
+
+		return switch (socket.type) {
+			case "OBJECT" | "VALUE" | "INT" | "BOOLEAN" | "STRING":
+				socket.default_value;
+			case "VECTOR" | "RGB":
+				socket.default_value == null ? [0, 0, 0] : [socket.default_value[0], socket.default_value[1], socket.default_value[2]];
+			case "RGBA":
+				socket.default_value == null ? [0, 0, 0, 1] : [socket.default_value[0], socket.default_value[1], socket.default_value[2], socket.default_value[3]];
+			default:
+				null;
+		}
+	}
+
+	static function createClassInstance(className: String, args: Array<Dynamic>): Dynamic {
+		var cname = Type.resolveClass(packageName + "." + className);
 		if (cname == null) return null;
 		return Type.createInstance(cname, args);
 	}
+}
+
+typedef TNodeCanvas = {
+	var name: String;
+	var nodes: Array<TNode>;
+	var links: Array<TNodeLink>;
+}
+
+typedef TNode = {
+	var id: Int;
+	var name: String;
+	var type: String;
+	var x: Float;
+	var y: Float;
+	var inputs: Array<TNodeSocket>;
+	var outputs: Array<TNodeSocket>;
+	var buttons: Array<TNodeButton>;
+	var color: Int;
+}
+
+typedef TNodeSocket = {
+	var id: Int;
+	var node_id: Int;
+	var name: String;
+	var type: String;
+	var color: Int;
+	var default_value: Dynamic;
+	@:optional var min: Null<Float>;
+	@:optional var max: Null<Float>;
+}
+
+typedef TNodeLink = {
+	var id: Int;
+	var from_id: Int;
+	var from_socket: Int;
+	var to_id: Int;
+	var to_socket: Int;
+}
+
+typedef TNodeButton = {
+	var name: String;
+	var type: String;
+	@:optional var output: Null<Int>;
+	@:optional var default_value: Dynamic;
+	@:optional var data: Dynamic;
+	@:optional var min: Null<Float>;
+	@:optional var max: Null<Float>;
 }

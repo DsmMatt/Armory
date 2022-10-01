@@ -8,19 +8,22 @@ import iron.system.Tween;
 class NavAgent extends Trait {
 
 	@prop
-	var speed:Float = 5;
+	public var speed: Float = 5;
+	@prop
+	public var turnDuration: Float = 0.4;
 
-	var path:Array<Vec4> = null;
+	var path: Array<Vec4> = null;
 	var index = 0;
 
-	var rotAnim:TAnim = null;
-	var locAnim:TAnim = null;
+	var rotAnim: TAnim = null;
+	var locAnim: TAnim = null;
 
 	public function new() {
 		super();
+		notifyOnRemove(stopTween);
 	}
 
-	public function setPath(path:Array<Vec4>) {
+	public function setPath(path: Array<Vec4>) {
 		stopTween();
 
 		this.path = path;
@@ -40,7 +43,7 @@ class NavAgent extends Trait {
 		path = null;
 	}
 
-	function shortAngle(from:Float, to:Float) {
+	function shortAngle(from: Float, to: Float): Float {
 		if (from < 0) from += Math.PI * 2;
 		if (to < 0) to += Math.PI * 2;
 		var delta = Math.abs(from - to);
@@ -57,15 +60,14 @@ class NavAgent extends Trait {
 
 		orient.subvecs(p, object.transform.loc).normalize;
 		var targetAngle = Math.atan2(orient.y, orient.x) + Math.PI / 2;
-
-		locAnim = Tween.to({ target: object.transform.loc, props: { x: p.x, y: p.y /*, z: p.z*/ }, duration: dist / speed, done: function() {
+		locAnim = Tween.to({ target: object.transform.loc, props: { x: p.x, y: p.y, z: p.z }, duration: dist / speed, done: function() {
 			index++;
 			if (index < path.length) go();
 			else removeUpdate(update);
 		}});
 
 		var q = new Quat();
-		rotAnim = Tween.to({ target: object.transform, props: { rot: q.fromEuler(0, 0, targetAngle) }, duration: 0.4});
+		rotAnim = Tween.to({ target: object.transform, props: { rot: q.fromEuler(0, 0, targetAngle) }, duration: turnDuration});
 	}
 
 	function update() {

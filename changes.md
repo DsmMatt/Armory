@@ -1,7 +1,6 @@
-* 2018-09-21: If you are using Armory Updater, please get Armory 0.5a from itch.io which includes the latest KodeStudio.
-* 2018-09-05: If you are using Armory Updater, please get Armory 0.5 from itch.io which includes the latest Kha and Krom. Alternatively, clone the full sdk from https://github.com/armory3d/armsdk.
+* 2019-06-30: Return value of `PhysicsWorld.rayCast()` changed, see https://github.com/armory3d/armory/commit/dfb7609a28cebf3a520e6a25a8563d01c32f2b01.
+* 2019-04-06: Use voxelao instead of voxelgi, gi will be reworked into raytracing.
+* 2019-01-13: If you are using Armory Updater, get Armory 0.6beta from https://armory.itch.io/armory3d first (or clone the sdk from https://github.com/armory3d/armsdk).
 * 2018-08-28: `LampObject` and `LampData` is now `LightObject` and `LightData`
 * 2018-06-01: 'Not Equal' has been removed from the Gate logic node. Use 'Equal' and 'False' output socket instead.
-* 2018-05-24: Armory is being transformed into a Blender 2.8 engine. Viewport player is now available in Blender 2.8 only (shipping with Armory 0.4). Compatibility with Blender 2.79 should be preserved.
-* 2018-03-23: If you are using Armory Updater, please get Armory 0.3 from itch.io which includes the latest Kha and Krom. Alternatively, clone the full sdk from https://github.com/armory3d/armsdk.
 * 2017-11-20: Use `armory.trait.physics.*` instead of `armory.trait.internal.*` to access physics traits.

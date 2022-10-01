@@ -1,41 +1,40 @@
 package armory.logicnode;
 
-import iron.math.Vec4;
+import iron.Scene;
 import iron.data.MaterialData;
 import iron.object.Object;
+import armory.trait.internal.UniformsManager;
 
 class SetMaterialImageParamNode extends LogicNode {
-
-	static var registered = false;
-	static var mat:MaterialData = null;
-	static var node = "";
-	static var image:kha.Image = null;
-
-	public function new(tree:LogicTree) {
+	
+	public function new(tree: LogicTree) {
 		super(tree);
-		if (!registered) {
-			registered = true;
-			iron.object.Uniforms.externalTextureLinks.push(textureLink);
-		}
+
 	}
 
-	override function run() {
-		mat = inputs[1].get();
-		node = inputs[2].get();
-		if (mat == null || node == null) return;
+	override function run(from: Int) {
+		var perObject: Null<Bool>;
 		
-		var name = inputs[3].get();
-		iron.data.Data.getImage(name, function(img:kha.Image) {
-			image = img;
-		});
+		var object = inputs[1].get();
+		if(object == null) return;
 
-		super.run();
-	}
+		perObject = inputs[2].get();
+		if(perObject == null) perObject = false;
 
-	static function textureLink(object:Object, mat:MaterialData, link:String):kha.Image {
-		if (link == node) {
-			return image;
+		var mat = inputs[3].get();
+		if(mat == null) return;
+
+		if(! perObject){
+			UniformsManager.removeObjectFromMap(object, Texture);
+			object = Scene.active.root;
 		}
-		return null;
+
+		var img = inputs[5].get();
+		if(img == null) return;
+		iron.data.Data.getImage(img, function(image: kha.Image) {
+			UniformsManager.setTextureValue(mat, object, inputs[4].get(), image);
+		});
+		
+		runOutput(0);
 	}
 }

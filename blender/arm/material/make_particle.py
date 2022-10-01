@@ -1,6 +1,12 @@
-
 import arm.utils
 import arm.material.mat_state as mat_state
+
+if arm.is_reload(__name__):
+    arm.utils = arm.reload_module(arm.utils)
+    mat_state = arm.reload_module(mat_state)
+else:
+    arm.enable_reload(__name__)
+
 
 def write(vert, particle_info=None, shadowmap=False):
 
@@ -17,7 +23,7 @@ def write(vert, particle_info=None, shadowmap=False):
 
     str_tex_hash = "float fhash(float n) { return fract(sin(n) * 43758.5453); }\n"
     vert.add_function(str_tex_hash)
-    
+
     prep = 'float '
     if out_age:
         prep = ''
@@ -38,20 +44,14 @@ def write(vert, particle_info=None, shadowmap=False):
         prep = ''
         vert.add_out('float p_lifetime')
     vert.write(prep + 'p_lifetime = pd[0][2];')
-    # todo: properly discard
+    # clip with nan
     vert.write('if (p_age < 0 || p_age > p_lifetime) {')
-    vert.write('    spos.x = spos.y = spos.z = -99999;')
-    if shadowmap:
-        vert.add_uniform('mat4 LWVP', '_lightWorldViewProjectionMatrix')
-        vert.write('    gl_Position = LWVP * spos;')
-    else:
-        vert.add_uniform('mat4 WVP', '_worldViewProjectionMatrix')
-        vert.write('    gl_Position = WVP * spos;')
+    vert.write('    gl_Position /= 0.0;')
     vert.write('    return;')
     vert.write('}')
 
     # vert.write('p_age /= 2;') # Match
-    
+
     # object_align_factor / 2 + gxyz
     prep = 'vec3 '
     if out_velocity:
@@ -81,7 +81,7 @@ def write(vert, particle_info=None, shadowmap=False):
     vert.write('spos.xyz += p_location;')
 
     # Particle fade
-    if mat_state.material.arm_particle_flag and arm.utils.get_rp().arm_particles == 'GPU' and mat_state.material.arm_particle_fade:
+    if mat_state.material.arm_particle_flag and arm.utils.get_rp().arm_particles == 'On' and mat_state.material.arm_particle_fade:
         vert.add_out('float p_fade')
         vert.write('p_fade = sin(min((p_age / 2) * 3.141592, 3.141592));')
 
@@ -95,5 +95,5 @@ def write_tilesheet(vert):
     vert.write('int tx = frame % int(pd[3][0]);')
     vert.write('int ty = int(frame / pd[3][0]);')
     vert.write('vec2 tilesheetOffset = vec2(tx * (1 / pd[3][0]), ty * (1 / pd[3][1]));')
-    vert.write('texCoord = tex + tilesheetOffset;')
+    vert.write('texCoord = tex * texUnpack + tilesheetOffset;')
     # vert.write('texCoord = tex;')

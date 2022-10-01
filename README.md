@@ -1,10 +1,8 @@
-armory
-==============
+# Armory - 3D Game Engine
+## [Download](https://armory3d.org/download) &bullet; [Release Notes](https://armory3d.org/notes) &bullet; [Manual](https://github.com/armory3d/armory/wiki) &bullet; [API](https://api.armory3d.org) &bullet; [Community](https://armory3d.org/community)
 
-[![Build Status](https://travis-ci.org/armory3d/armory.svg?branch=master)](https://travis-ci.org/armory3d/armory)
+Armory is an open-source 3D game engine focused on portability, minimal footprint and performance. The renderer is fully scriptable with deferred and forward paths supported out of the box.
 
-[armory3d.org](http://armory3d.org) - [Manual](http://armory3d.org/manual) - [Roadmap](https://github.com/armory3d/armory/projects) - [Forums](http://forums.armory3d.org) - [Discord](https://discordapp.com/invite/axq6qWV)
-
-In development! Armory is a real-time 3D engine aimed at creation of 3D games and applications - featuring full Blender integration, state of art rendering and ultra portability. The engine is currently available in a form of [early preview](http://armory3d.org/download.html).
+Armory as a Blender add-on provides a full Blender integration, turning it into a complete game development tool and a unified workflow from start to finish. 
 
 ![](http://armory3d.org/git/img1.jpg)

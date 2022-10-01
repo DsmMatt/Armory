@@ -1,40 +1,93 @@
-import os
+import errno
 import glob
-import time
-import shutil
-import bpy
 import json
+import os
+from queue import Queue
+import re
+import shlex
+import shutil
 import stat
-from bpy.props import *
+from string import Template
 import subprocess
 import threading
+import time
+from typing import Callable
 import webbrowser
-import arm.utils
-import arm.write_data as write_data
-import arm.make_logic as make_logic
-import arm.make_renderpath as make_renderpath
-import arm.make_world as make_world
-import arm.make_state as state
+
+import bpy
+
 import arm.assets as assets
-import arm.log as log
+from arm.exporter import ArmoryExporter
 import arm.lib.make_datas
 import arm.lib.server
-from arm.exporter import ArmoryExporter
+import arm.live_patch as live_patch
+import arm.log as log
+import arm.make_logic as make_logic
+import arm.make_renderpath as make_renderpath
+import arm.make_state as state
+import arm.make_world as make_world
+import arm.utils
+import arm.utils_vs
+import arm.write_data as write_data
 
-exporter = ArmoryExporter()
+if arm.is_reload(__name__):
+    assets = arm.reload_module(assets)
+    arm.exporter = arm.reload_module(arm.exporter)
+    from arm.exporter import ArmoryExporter
+    arm.lib.make_datas = arm.reload_module(arm.lib.make_datas)
+    arm.lib.server = arm.reload_module(arm.lib.server)
+    live_patch = arm.reload_module(live_patch)
+    log = arm.reload_module(log)
+    make_logic = arm.reload_module(make_logic)
+    make_renderpath = arm.reload_module(make_renderpath)
+    state = arm.reload_module(state)
+    make_world = arm.reload_module(make_world)
+    arm.utils = arm.reload_module(arm.utils)
+    arm.utils_vs = arm.reload_module(arm.utils_vs)
+    write_data = arm.reload_module(write_data)
+else:
+    arm.enable_reload(__name__)
+
 scripts_mtime = 0 # Monitor source changes
 profile_time = 0
 
-def run_proc(cmd, done):
-    def fn(p, done):
-        p.wait()
-        if done != None:
+# Queue of threads and their done callbacks. Item format: [thread, done]
+thread_callback_queue = Queue(maxsize=0)
+
+
+def run_proc(cmd, done: Callable) -> subprocess.Popen:
+    """Creates a subprocess with the given command and returns it.
+
+    If Blender is not running in background mode, a thread is spawned
+    that waits until the subprocess has finished executing to not freeze
+    the UI, otherwise (in background mode) execution is blocked until
+    the subprocess has finished.
+
+    If `done` is not `None`, it is called afterwards in the main thread.
+    """
+    use_thread = not bpy.app.background
+
+    def wait_for_proc(proc: subprocess.Popen):
+        proc.wait()
+
+        if use_thread:
+            # Put the done callback into the callback queue so that it
+            # can be received by a polling function in the main thread
+            thread_callback_queue.put([threading.current_thread(), done], block=True)
+        else:
             done()
+
     p = subprocess.Popen(cmd)
-    threading.Thread(target=fn, args=(p, done)).start()
+
+    if use_thread:
+        threading.Thread(target=wait_for_proc, args=(p,)).start()
+    else:
+        wait_for_proc(p)
+
     return p
 
-def compile_shader_pass(res, raw_shaders_path, shader_name, defs):
+
+def compile_shader_pass(res, raw_shaders_path, shader_name, defs, make_variants):
     os.chdir(raw_shaders_path + '/' + shader_name)
 
     # Open json file
@@ -44,7 +97,7 @@ def compile_shader_pass(res, raw_shaders_path, shader_name, defs):
     json_data = json.loads(json_file)
 
     fp = arm.utils.get_fp_build()
-    arm.lib.make_datas.make(res, shader_name, json_data, fp, defs)
+    arm.lib.make_datas.make(res, shader_name, json_data, fp, defs, make_variants)
 
     path = fp + '/compiled/Shaders'
     c = json_data['contexts'][0]
@@ -57,15 +110,15 @@ def remove_readonly(func, path, excinfo):
     func(path)
 
 def export_data(fp, sdk_path):
-    global exporter
     wrd = bpy.data.worlds['Arm']
 
-    print('\nArmory v{0} ({1})'.format(wrd.arm_version, wrd.arm_commit))
-    print('OS: ' + arm.utils.get_os() + ', Target: ' + state.target + ', GAPI: ' + arm.utils.get_gapi() + ', Blender: ' + bpy.app.version_string)
+    print('Armory v{0} ({1})'.format(wrd.arm_version, wrd.arm_commit))
+    if wrd.arm_verbose_output:
+        print(f'Blender: {bpy.app.version_string}, Target: {state.target}, GAPI: {arm.utils.get_gapi()}')
 
     # Clean compiled variants if cache is disabled
     build_dir = arm.utils.get_fp_build()
-    if wrd.arm_cache_shaders == False:
+    if not wrd.arm_cache_build:
         if os.path.isdir(build_dir + '/debug/html5-resources'):
             shutil.rmtree(build_dir + '/debug/html5-resources', onerror=remove_readonly)
         if os.path.isdir(build_dir + '/krom-resources'):
@@ -100,11 +153,26 @@ def export_data(fp, sdk_path):
     navigation_found = False
     ui_found = False
     ArmoryExporter.compress_enabled = state.is_publish and wrd.arm_asset_compression
+    ArmoryExporter.optimize_enabled = state.is_publish and wrd.arm_optimize_data
+    if not os.path.exists(build_dir + '/compiled/Assets'):
+        os.makedirs(build_dir + '/compiled/Assets')
+    # have a "zoo" collection in the current scene
+    export_coll = bpy.data.collections.new("export_coll")
+    bpy.context.scene.collection.children.link(export_coll)
+    for scene in bpy.data.scenes:
+        if scene == bpy.context.scene: continue
+        for o in scene.collection.all_objects:
+            if o.type == "MESH" or o.type == "EMPTY":
+                if o.name not in  export_coll.all_objects.keys():
+                    export_coll.objects.link(o)
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    bpy.data.collections.remove(export_coll) # destroy "zoo" collection
+
     for scene in bpy.data.scenes:
         if scene.arm_export:
-            ext = '.zip' if (scene.arm_compress and state.is_publish) else '.arm'
+            ext = '.lz4' if ArmoryExporter.compress_enabled else '.arm'
             asset_path = build_dir + '/compiled/Assets/' + arm.utils.safestr(scene.name) + ext
-            exporter.execute(bpy.context, asset_path, scene=scene)
+            ArmoryExporter.export_scene(bpy.context, asset_path, scene=scene, depsgraph=depsgraph)
             if ArmoryExporter.export_physics:
                 physics_found = True
             if ArmoryExporter.export_navigation:
@@ -134,40 +202,41 @@ def export_data(fp, sdk_path):
         modules.append('navigation')
     if export_ui:
         modules.append('ui')
-    if wrd.arm_hscript == 'Enabled':
-        modules.append('hscript')
-    if wrd.arm_formatlib == 'Enabled':
-        modules.append('format')
-    print('Exported modules: ' + str(modules))
 
     defs = arm.utils.def_strings_to_array(wrd.world_defs)
     cdefs = arm.utils.def_strings_to_array(wrd.compo_defs)
-    print('Shader flags: ' + str(defs))
-    if wrd.arm_play_console:
-        print('Khafile flags: ' + str(assets.khafile_defs))
+
+    if wrd.arm_verbose_output:
+        print('Exported modules:', ', '.join(modules))
+        print('Shader flags:', ' '.join(defs))
+        print('Compositor flags:', ' '.join(cdefs))
+        print('Khafile flags:', ' '.join(assets.khafile_defs))
+
+    # Render path is configurable at runtime
+    has_config = wrd.arm_write_config or os.path.exists(arm.utils.get_fp() + '/Bundled/config.arm')
 
     # Write compiled.inc
     shaders_path = build_dir + '/compiled/Shaders'
     if not os.path.exists(shaders_path):
         os.makedirs(shaders_path)
-    write_data.write_compiledglsl(defs + cdefs)
+    write_data.write_compiledglsl(defs + cdefs, make_variants=has_config)
 
     # Write referenced shader passes
     if not os.path.isfile(build_dir + '/compiled/Shaders/shader_datas.arm') or state.last_world_defs != wrd.world_defs:
-        res = {}
-        res['shader_datas'] = []
+        res = {'shader_datas': []}
+
         for ref in assets.shader_passes:
             # Ensure shader pass source exists
             if not os.path.exists(raw_shaders_path + '/' + ref):
                 continue
             assets.shader_passes_assets[ref] = []
-            if ref.startswith('compositor_pass'):
-                compile_shader_pass(res, raw_shaders_path, ref, defs + cdefs)
-            # elif ref.startswith('grease_pencil'):
-                # compile_shader_pass(res, raw_shaders_path, ref, [])
-            else:
-                compile_shader_pass(res, raw_shaders_path, ref, defs)
+            compile_shader_pass(res, raw_shaders_path, ref, defs + cdefs, make_variants=has_config)
+
+        # Workaround to also export non-material world shaders
+        res['shader_datas'] += make_world.shader_datas
+
         arm.utils.write_arm(shaders_path + '/shader_datas.arm', res)
+
     for ref in assets.shader_passes:
         for s in assets.shader_passes_assets[ref]:
             assets.add_shader(shaders_path + '/' + s + '.glsl')
@@ -190,14 +259,16 @@ def export_data(fp, sdk_path):
     if wrd.arm_write_config:
         write_data.write_config(resx, resy)
 
+    # Change project version (Build, Publish)
+    if (not state.is_play) and (wrd.arm_project_version_autoinc):
+        wrd.arm_project_version = arm.utils.change_version_project(wrd.arm_project_version)
+
     # Write khafile.js
-    enable_dce = state.is_publish and wrd.arm_dce
-    import_logic = not state.is_publish and arm.utils.logic_editor_space() != None
-    write_data.write_khafilejs(state.is_play, export_physics, export_navigation, export_ui, state.is_publish, enable_dce, state.is_viewport, ArmoryExporter.import_traits, import_logic)
+    write_data.write_khafilejs(state.is_play, export_physics, export_navigation, export_ui, state.is_publish, ArmoryExporter.import_traits)
 
     # Write Main.hx - depends on write_khafilejs for writing number of assets
     scene_name = arm.utils.get_project_scene_name()
-    write_data.write_mainhx(scene_name, resx, resy, state.is_play, state.is_viewport, state.is_publish)
+    write_data.write_mainhx(scene_name, resx, resy, state.is_play, state.is_publish)
     if scene_name != state.last_scene or resx != state.last_resx or resy != state.last_resy:
         wrd.arm_recompile = True
         state.last_resx = resx
@@ -211,29 +282,44 @@ def compile(assets_only=False):
 
     # Set build command
     target_name = state.target
-    if target_name == 'native':
-        target_name = '--compile'
 
     node_path = arm.utils.get_node_path()
     khamake_path = arm.utils.get_khamake_path()
+    cmd = [node_path, khamake_path]
 
     kha_target_name = arm.utils.get_kha_target(target_name)
-    cmd = [node_path, khamake_path, kha_target_name]
+    if kha_target_name != '':
+        cmd.append(kha_target_name)
 
-    ffmpeg_path = arm.utils.get_ffmpeg_path() # Path to binary
-    if ffmpeg_path != '':
+    # Custom exporter
+    if state.is_export:
+        item = wrd.arm_exporterlist[wrd.arm_exporterlist_index]
+        if item.arm_project_target == 'custom' and item.arm_project_khamake != '':
+            for s in item.arm_project_khamake.split(' '):
+                cmd.append(s)
+
+    ffmpeg_path = arm.utils.get_ffmpeg_path()
+    if ffmpeg_path != None and ffmpeg_path != '':
         cmd.append('--ffmpeg')
         cmd.append(ffmpeg_path) # '"' + ffmpeg_path + '"'
 
     state.export_gapi = arm.utils.get_gapi()
     cmd.append('-g')
     cmd.append(state.export_gapi)
+    # Windows - Set Visual Studio Version
+    if state.target.startswith('windows'):
+        cmd.append('--visualstudio')
+        cmd.append(arm.utils_vs.version_to_khamake_id[wrd.arm_project_win_list_vs])
 
-    if arm.utils.get_legacy_shaders() and not state.is_viewport:
+    if arm.utils.get_legacy_shaders() or 'ios' in state.target:
+        if 'html5' in state.target or 'ios' in state.target:
+            pass
+        else:
+            cmd.append('--shaderversion')
+            cmd.append('110')
+    elif 'android' in state.target or 'html5' in state.target:
         cmd.append('--shaderversion')
-        cmd.append('110')
-    elif 'android' in state.target or 'ios' in state.target or 'html5' in state.target:
-        pass # Use defaults
+        cmd.append('300')
     else:
         cmd.append('--shaderversion')
         cmd.append('330')
@@ -242,71 +328,61 @@ def compile(assets_only=False):
         cmd.append('--vr')
         cmd.append('webvr')
 
-    if arm.utils.get_rp().rp_renderer == 'Pathtracer':
+    if arm.utils.get_pref_or_default('khamake_debug', False):
+        cmd.append('--debug')
+
+    if arm.utils.get_rp().rp_renderer == 'Raytracer':
         cmd.append('--raytrace')
         cmd.append('dxr')
-        dxc_path = fp + '/HlslShaders/fxc.exe'
-        subprocess.Popen([dxc_path, '-Zpr', '-Fo', fp + '/Bundled/pt_raygeneration.o', '-T', 'lib_6_1', fp + '/HlslShaders/pt_raygeneration.hlsl'])
-        subprocess.Popen([dxc_path, '-Zpr', '-Fo', fp + '/Bundled/pt_closesthit.o', '-T', 'lib_6_1', fp + '/HlslShaders/pt_closesthit.hlsl'])
-        subprocess.Popen([dxc_path, '-Zpr', '-Fo', fp + '/Bundled/pt_miss.o', '-T', 'lib_6_1', fp + '/HlslShaders/pt_miss.hlsl'])
+        dxc_path = fp + '/HlslShaders/dxc.exe'
+        subprocess.Popen([dxc_path, '-Zpr', '-Fo', fp + '/Bundled/raytrace.cso', '-T', 'lib_6_3', fp + '/HlslShaders/raytrace.hlsl']).wait()
 
-    if arm.utils.get_khamake_threads() > 1:
+    if arm.utils.get_khamake_threads() != 1:
         cmd.append('--parallelAssetConversion')
         cmd.append(str(arm.utils.get_khamake_threads()))
 
+    compilation_server = False
+
     cmd.append('--to')
-    if (kha_target_name == 'krom' and not state.is_viewport and not state.is_publish) or (kha_target_name == 'html5' and not state.is_publish):
+    if (kha_target_name == 'krom' and not state.is_publish) or (kha_target_name == 'html5' and not state.is_publish):
         cmd.append(arm.utils.build_dir() + '/debug')
+        # Start compilation server
+        if kha_target_name == 'krom' and arm.utils.get_compilation_server() and not assets_only and wrd.arm_cache_build:
+            compilation_server = True
+            arm.lib.server.run_haxe(arm.utils.get_haxe_path())
     else:
         cmd.append(arm.utils.build_dir())
 
-    # User defined commands
-    if wrd.arm_khamake != '':
-        for s in bpy.data.texts[wrd.arm_khamake].as_string().split(' '):
-            cmd.append(s)
+    if not wrd.arm_verbose_output:
+        cmd.append("--quiet")
+    else:
+        print("Using project from " + arm.utils.get_fp())
+        print("Running: ", *cmd)
 
-    if assets_only:
-        cmd.append('--nohaxe')
-        cmd.append('--noproject')
+    #Project needs to be compiled at least once
+    #before compilation server can work
+    if not os.path.exists(arm.utils.build_dir() + '/debug/krom/krom.js') and not state.is_publish:
+       state.proc_build = run_proc(cmd, build_done)
+    else:
+        if assets_only or compilation_server:
+            cmd.append('--nohaxe')
+            cmd.append('--noproject')
+        state.proc_build = run_proc(cmd, assets_done if compilation_server else build_done)
 
-    print("Running: ", cmd)
-    print("Using project from " + arm.utils.get_fp())
-    state.proc_build = run_proc(cmd, build_done)
-
-def build_viewport():
-    if state.proc_build != None:
-        return
-
-    if not arm.utils.check_saved(None):
-        return
-
-    if not arm.utils.check_sdkpath(None):
-        return
-
-    if not arm.utils.check_engine(None):
-        return
-
-    arm.utils.check_default_props()
-
-    assets.invalidate_enabled = False
-    play(is_viewport=True)
-    assets.invalidate_enabled = True
-
-def build(target, is_play=False, is_publish=False, is_viewport=False, is_export=False):
+def build(target, is_play=False, is_publish=False, is_export=False):
     global profile_time
     profile_time = time.time()
 
     state.target = target
     state.is_play = is_play
     state.is_publish = is_publish
-    state.is_viewport = is_viewport
     state.is_export = is_export
 
     # Save blend
-    if arm.utils.get_save_on_build() and not state.is_viewport:
+    if arm.utils.get_save_on_build():
         bpy.ops.wm.save_mainfile()
 
-    log.clear()
+    log.clear(clear_warnings=True, clear_errors=True)
 
     # Set camera in active scene
     active_scene = arm.utils.get_active_scene()
@@ -365,13 +441,46 @@ def build(target, is_play=False, is_publish=False, is_viewport=False, is_export=
                 shutil.copy(fn, arm.utils.build_dir() + dest + os.path.basename(fn))
 
 def play_done():
+    """Called if the player was stopped/terminated."""
     state.proc_play = None
     state.redraw_ui = True
     log.clear()
+    live_patch.stop()
+
+def assets_done():
+    if state.proc_build == None:
+        return
+    result = state.proc_build.poll()
+    if result == 0:
+        # Connect to the compilation server
+        os.chdir(arm.utils.build_dir() + '/debug/')
+        cmd = [arm.utils.get_haxe_path(), '--connect', '6000', 'project-krom.hxml']
+        state.proc_build = run_proc(cmd, compilation_server_done)
+    else:
+        state.proc_build = None
+        state.redraw_ui = True
+        log.error('Build failed, check console')
+
+def compilation_server_done():
+    if state.proc_build == None:
+        return
+    result = state.proc_build.poll()
+    if result == 0:
+        if os.path.exists('krom/krom.js.temp'):
+            os.chmod('krom/krom.js', stat.S_IWRITE)
+            os.remove('krom/krom.js')
+            os.rename('krom/krom.js.temp', 'krom/krom.js')
+        build_done()
+    else:
+        state.proc_build = None
+        state.redraw_ui = True
+        log.error('Build failed, check console')
 
 def build_done():
-    print('Finished in ' + str(time.time() - profile_time))
-    if state.proc_build == None:
+    print('Finished in {:0.3f}s'.format(time.time() - profile_time))
+    if log.num_warnings > 0:
+        log.print_warn(f'{log.num_warnings} warning{"s" if log.num_warnings > 1 else ""} occurred during compilation')
+    if state.proc_build is None:
         return
     result = state.proc_build.poll()
     state.proc_build = None
@@ -380,45 +489,36 @@ def build_done():
         bpy.data.worlds['Arm'].arm_recompile = False
         build_success()
     else:
-        log.print_info('Build failed, check console')
+        log.error('Build failed, check console')
 
-def runtime_to_target(is_viewport):
+
+def runtime_to_target():
     wrd = bpy.data.worlds['Arm']
-    if is_viewport or wrd.arm_play_runtime == 'Krom':
+    if wrd.arm_runtime == 'Krom':
         return 'krom'
-    elif wrd.arm_play_runtime == 'Native':
-        return 'native'
     else:
         return 'html5'
 
-def get_khajs_path(is_viewport, target):
-    if is_viewport:
-        return arm.utils.build_dir() + '/krom/krom.js'
-    elif target == 'krom':
+def get_khajs_path(target):
+    if target == 'krom':
         return arm.utils.build_dir() + '/debug/krom/krom.js'
     else: # Browser
         return arm.utils.build_dir() + '/debug/html5/kha.js'
 
-def play(is_viewport):
+def play():
     global scripts_mtime
-    global code_parsed
     wrd = bpy.data.worlds['Arm']
 
-    log.clear()
+    build(target=runtime_to_target(), is_play=True)
 
-    build(target=runtime_to_target(is_viewport), is_play=True, is_viewport=is_viewport)
-
-    khajs_path = get_khajs_path(is_viewport, state.target)
-    if not wrd.arm_cache_compiler or \
+    khajs_path = get_khajs_path(state.target)
+    if not wrd.arm_cache_build or \
        not os.path.isfile(khajs_path) or \
        assets.khafile_defs_last != assets.khafile_defs or \
-       state.last_target != state.target or \
-       state.last_is_viewport != state.is_viewport or \
-       state.target == 'native':
+       state.last_target != state.target:
         wrd.arm_recompile = True
 
     state.last_target = state.target
-    state.last_is_viewport = state.is_viewport
 
     # Trait sources modified
     state.mod_scripts = []
@@ -446,48 +546,54 @@ def build_success():
     log.clear()
     wrd = bpy.data.worlds['Arm']
 
-    if state.is_play and state.is_viewport:
-        open(arm.utils.get_fp_build() + '/krom/krom.lock', 'w').close()
-    elif state.is_play:
-        if wrd.arm_play_runtime == 'Browser':
-            # Start server
+    if state.is_play:
+        cmd = []
+        width, height = arm.utils.get_render_resolution(arm.utils.get_active_scene())
+        if wrd.arm_runtime == 'Browser':
             os.chdir(arm.utils.get_fp())
-            t = threading.Thread(name='localserver', target=arm.lib.server.run)
-            t.daemon = True
+            prefs = arm.utils.get_arm_preferences()
+            host = 'localhost'
+            t = threading.Thread(name='localserver', target=arm.lib.server.run_tcp, args=(prefs.html5_server_port, prefs.html5_server_log), daemon=True)
             t.start()
-            html5_app_path = 'http://localhost:8040/' + arm.utils.build_dir() + '/debug/html5'
-            webbrowser.open(html5_app_path)
-        elif wrd.arm_play_runtime == 'Krom':
-            bin_ext = '' if state.export_gapi == 'opengl' else '_' + state.export_gapi
-            krom_location, krom_path = arm.utils.krom_paths(bin_ext=bin_ext)
+            build_dir = arm.utils.build_dir()
+            path = '{}/debug/html5/'.format(build_dir)
+            url = 'http://{}:{}/{}'.format(host, prefs.html5_server_port, path)
+            browser = webbrowser.get().name
+            if 'ARMORY_PLAY_HTML5' in os.environ:
+                str = Template(os.environ['ARMORY_PLAY_HTML5']).safe_substitute({'host': host, 'port': prefs.html5_server_port, 'width': width, 'height': height, 'url': url, 'path': path, 'dir': build_dir, 'browser': browser})
+                cmd = re.split(' +', str)
+            if len(cmd) == 0:
+                if browser == '':
+                    webbrowser.open(url)
+                    return
+                else:
+                    cmd = [browser, url]
+        elif wrd.arm_runtime == 'Krom':
+            if wrd.arm_live_patch:
+                live_patch.start()
+                open(arm.utils.get_fp_build() + '/debug/krom/krom.patch', 'w').close()
+            krom_location, krom_path = arm.utils.krom_paths()
+            path = arm.utils.get_fp_build() + '/debug/krom'
+            path_resources = path + '-resouces'
+            pid = os.getpid()
             os.chdir(krom_location)
-            cmd = [krom_path, arm.utils.get_fp_build() + '/debug/krom', arm.utils.get_fp_build() + '/debug/krom-resources']
-            if arm.utils.get_os() == 'win':
-                cmd.append('--consolepid')
-                cmd.append(str(os.getpid()))
-            elif arm.utils.get_os() == 'mac' or arm.utils.get_os() == 'linux': # TODO: Wait for new Krom audio
-                cmd.append('--nosound')
-            state.proc_play = run_proc(cmd, play_done)
-        elif wrd.arm_play_runtime == 'Native':
-            if arm.utils.get_os() == 'win':
-                bin_location = arm.utils.get_fp_build() + '/windows'
-            elif arm.utils.get_os() == 'linux':
-                bin_location = arm.utils.get_fp_build() + '/linux'
-            else:
-                bin_location = arm.utils.get_fp_build() + '/osx-build/build/Release'
-            os.chdir(bin_location)
-            if arm.utils.get_os() == 'win':
-                p = bin_location + '/' + arm.utils.safestr(wrd.arm_project_name) + '.exe'
-            elif arm.utils.get_os() == 'linux':
-                p = bin_location + '/' + arm.utils.safestr(wrd.arm_project_name)
-            else:
-                p = bin_location + '/' + arm.utils.safestr(wrd.arm_project_name) + '.app/Contents/MacOS/' + arm.utils.safestr(wrd.arm_project_name)
-            state.proc_play = run_proc(p, play_done)
-
+            if 'ARMORY_PLAY_KROM' in os.environ:
+                str = Template(os.environ['ARMORY_PLAY_KROM']).safe_substitute({'pid': pid,'audio': wrd.arm_audio != 'Disabled', 'location': krom_location, 'krom_path': krom_path, 'path': path, 'resources': path_resources, 'width': width, 'height': height })
+                cmd = re.split(' +', str)
+            if len(cmd) == 0:
+                cmd = [krom_path, path, path_resources]
+                if arm.utils.get_os() == 'win':
+                    cmd.append('--consolepid')
+                    cmd.append(pid)
+                if wrd.arm_audio == 'Disabled':
+                    cmd.append('--nosound')
+        if wrd.arm_verbose_output:
+            print(*cmd)
+        state.proc_play = run_proc(cmd, play_done)
     elif state.is_publish:
         sdk_path = arm.utils.get_sdk_path()
         target_name = arm.utils.get_kha_target(state.target)
-        files_path = arm.utils.get_fp_build() + '/' + target_name
+        files_path = os.path.join(arm.utils.get_fp_build(), target_name)
 
         if (target_name == 'html5' or target_name == 'krom') and wrd.arm_minify_js:
             # Minify JS
@@ -501,21 +607,20 @@ def build_success():
             proc.wait()
 
         if target_name == 'krom':
-            # Clean up
-            mapfile = files_path + '/krom.js.temp.map'
-            if os.path.exists(mapfile):
-                os.remove(mapfile)
             # Copy Krom binaries
             if state.target == 'krom-windows':
                 gapi = state.export_gapi
-                ext = '' if gapi == 'opengl' else '_' + gapi
+                ext = '' if gapi == 'direct3d11' else '_' + gapi
                 krom_location = sdk_path + '/Krom/Krom' + ext + '.exe'
                 shutil.copy(krom_location, files_path + '/Krom.exe')
-                os.rename(files_path + '/Krom.exe', files_path + '/' + arm.utils.safestr(wrd.arm_project_name) + '.exe')
+                krom_exe = arm.utils.safestr(wrd.arm_project_name) + '.exe'
+                os.rename(files_path + '/Krom.exe', files_path + '/' + krom_exe)
             elif state.target == 'krom-linux':
                 krom_location = sdk_path + '/Krom/Krom'
                 shutil.copy(krom_location, files_path)
-                os.rename(files_path + '/Krom', files_path + '/' + arm.utils.safestr(wrd.arm_project_name))
+                krom_exe = arm.utils.safestr(wrd.arm_project_name)
+                os.rename(files_path + '/Krom', files_path + '/' + krom_exe)
+                krom_exe = './' + krom_exe
             else:
                 krom_location = sdk_path + '/Krom/Krom.app'
                 shutil.copytree(krom_location, files_path + '/Krom.app')
@@ -524,35 +629,230 @@ def build_success():
                     f = files_path + '/' + f
                     if os.path.isfile(f):
                         shutil.move(f, files_path + '/Krom.app/Contents/MacOS')
-                os.rename(files_path + '/Krom.app', files_path + '/' + arm.utils.safestr(wrd.arm_project_name) + '.app')
+                krom_exe = arm.utils.safestr(wrd.arm_project_name) + '.app'
+                os.rename(files_path + '/Krom.app', files_path + '/' + krom_exe)
+
             # Rename
             ext = state.target.split('-')[-1] # krom-windows
             new_files_path = files_path + '-' + ext
             os.rename(files_path, new_files_path)
             files_path = new_files_path
-        
+
         if target_name == 'html5':
-            print('Exported HTML5 package to ' + files_path)
-        elif target_name == 'ios' or target_name == 'osx': # TODO: to macos
-            print('Exported XCode project to ' + files_path + '-build')
-        elif target_name == 'windows' or target_name == 'windowsapp':
-            print('Exported Visual Studio 2017 project to ' + files_path + '-build')
-        elif target_name == 'android-native':
-            print('Exported Android Studio project to ' + files_path + '-build/' + arm.utils.safestr(wrd.arm_project_name))
-        elif target_name == 'krom':
-            print('Exported Krom package to ' + files_path)
+            project_path = files_path
+            print('Exported HTML5 package to ' + project_path)
+        elif target_name.startswith('ios') or target_name.startswith('osx'): # TODO: to macos
+            project_path = files_path + '-build'
+            print('Exported XCode project to ' + project_path)
+        elif target_name.startswith('windows'):
+            project_path = files_path + '-build'
+            vs_info = arm.utils_vs.get_supported_version(wrd.arm_project_win_list_vs)
+            print(f'Exported {vs_info["name"]} project to {project_path}')
+        elif target_name.startswith('android'):
+            project_name = arm.utils.safesrc(wrd.arm_project_name + '-' + wrd.arm_project_version)
+            project_path = os.path.join(files_path + '-build', project_name)
+            print('Exported Android Studio project to ' + project_path)
+        elif target_name.startswith('krom'):
+            project_path = files_path
+            print('Exported Krom package to ' + project_path)
         else:
-            print('Exported makefiles to ' + files_path + '-build')
+            project_path = files_path + '-build'
+            print('Exported makefiles to ' + project_path)
+
+        if not bpy.app.background and arm.utils.get_arm_preferences().open_build_directory:
+            arm.utils.open_folder(project_path)
+
+        # Android build APK
+        if target_name.startswith('android'):
+            if (arm.utils.get_project_android_build_apk()) and (len(arm.utils.get_android_sdk_root_path()) > 0):
+                print("\nBuilding APK")
+                # Check settings
+                path_sdk = arm.utils.get_android_sdk_root_path()
+                if len(path_sdk) > 0:
+                    # Check Environment Variables - ANDROID_SDK_ROOT
+                    if os.getenv('ANDROID_SDK_ROOT') == None:
+                        # Set value from settings
+                        os.environ['ANDROID_SDK_ROOT'] = path_sdk
+                else:
+                    project_path = ''
+
+                # Build start
+                if len(project_path) > 0:
+                    os.chdir(project_path) # set work folder
+                    if arm.utils.get_os_is_windows():
+                        state.proc_publish_build = run_proc(os.path.join(project_path, "gradlew.bat assembleDebug"), done_gradlew_build)
+                    else:
+                        cmd = shlex.split(os.path.join(project_path, "gradlew assembleDebug"))
+                        state.proc_publish_build = run_proc(cmd, done_gradlew_build)
+                else:
+                    print('\nBuilding APK Warning: ANDROID_SDK_ROOT is not specified in environment variables and "Android SDK Path" setting is not specified in preferences: \n- If you specify an environment variable ANDROID_SDK_ROOT, then you need to restart Blender;\n- If you specify the setting "Android SDK Path" in the preferences, then repeat operation "Publish"')
+
+        # HTML5 After Publish
+        if target_name.startswith('html5'):
+            if len(arm.utils.get_html5_copy_path()) > 0 and (wrd.arm_project_html5_copy):
+                project_name = arm.utils.safesrc(wrd.arm_project_name +'-'+ wrd.arm_project_version)
+                dst = os.path.join(arm.utils.get_html5_copy_path(), project_name)
+                if os.path.exists(dst):
+                    shutil.rmtree(dst)
+                try:
+                    shutil.copytree(project_path, dst)
+                    print("Copied files to " + dst)
+                except OSError as exc:
+                    if exc.errno == errno.ENOTDIR:
+                        shutil.copy(project_path, dst)
+                    else: raise
+                if len(arm.utils.get_link_web_server()) and (wrd.arm_project_html5_start_browser):
+                    link_html5_app = arm.utils.get_link_web_server() +'/'+ project_name
+                    print("Running a browser with a link " + link_html5_app)
+                    webbrowser.open(link_html5_app)
+
+        # Windows After Publish
+        if target_name.startswith('windows') and wrd.arm_project_win_build != 'nothing' and arm.utils.get_os_is_windows():
+            project_name = arm.utils.safesrc(wrd.arm_project_name + '-' + wrd.arm_project_version)
+
+            # Open in Visual Studio
+            if wrd.arm_project_win_build == 'open':
+                print('\nOpening in Visual Studio: ' + arm.utils_vs.get_sln_path())
+                _ = arm.utils_vs.open_project_in_vs(wrd.arm_project_win_list_vs)
+
+            # Compile
+            elif wrd.arm_project_win_build.startswith('compile'):
+                if wrd.arm_project_win_build == 'compile':
+                    print('\nCompiling project ' + arm.utils_vs.get_vcxproj_path())
+                elif wrd.arm_project_win_build == 'compile_and_run':
+                    print('\nCompiling and running project ' + arm.utils_vs.get_vcxproj_path())
+
+                success = arm.utils_vs.enable_vsvars_env(wrd.arm_project_win_list_vs, done_vs_vars)
+                if not success:
+                    state.redraw_ui = True
+                    log.error('Compile failed, check console')
+
+
+def done_gradlew_build():
+    if state.proc_publish_build == None:
+        return
+    result = state.proc_publish_build.poll()
+    if result == 0:
+        state.proc_publish_build = None
+
+        wrd = bpy.data.worlds['Arm']
+        path_apk = os.path.join(arm.utils.get_fp_build(), arm.utils.get_kha_target(state.target))
+        project_name = arm.utils.safesrc(wrd.arm_project_name +'-'+ wrd.arm_project_version)
+        path_apk = os.path.join(path_apk + '-build', project_name, 'app', 'build', 'outputs', 'apk', 'debug')
+
+        print("\nBuild APK to " + path_apk)
+        # Rename APK
+        apk_name = 'app-debug.apk'
+        file_name = os.path.join(path_apk, apk_name)
+        if wrd.arm_project_android_rename_apk:
+            apk_name = project_name + '.apk'
+            os.rename(file_name, os.path.join(path_apk, apk_name))
+            file_name = os.path.join(path_apk, apk_name)
+            print("\nRename APK to " + apk_name)
+        # Copy APK
+        if wrd.arm_project_android_copy_apk:
+            shutil.copyfile(file_name, os.path.join(arm.utils.get_android_apk_copy_path(), apk_name))
+            print("Copy APK to " + arm.utils.get_android_apk_copy_path())
+        # Open directory with APK
+        if arm.utils.get_android_open_build_apk_directory():
+            arm.utils.open_folder(path_apk)
+        # Open directory after copy APK
+        if arm.utils.get_android_apk_copy_open_directory():
+            arm.utils.open_folder(arm.utils.get_android_apk_copy_path())
+        # Running emulator
+        if wrd.arm_project_android_run_avd:
+            run_android_emulators(arm.utils.get_android_emulator_name())
+        state.redraw_ui = True
+    else:
+        state.proc_publish_build = None
+        state.redraw_ui = True
+        os.environ['ANDROID_SDK_ROOT'] = ''
+        log.error('Building the APK failed, check console')
+
+def run_android_emulators(avd_name):
+    if len(avd_name.strip()) == 0:
+        return
+    print('\nRunning Emulator "'+ avd_name +'"')
+    path_file = arm.utils.get_android_emulator_file()
+    if len(path_file) > 0:
+        if arm.utils.get_os_is_windows():
+            run_proc(path_file + " -avd "+ avd_name, None)
+        else:
+            cmd = shlex.split(path_file + " -avd "+ avd_name)
+            run_proc(cmd, None)
+    else:
+        print('Update List Emulators Warning: File "'+ path_file +'" not found. Check that the variable ANDROID_SDK_ROOT is correct in environment variables or in "Android SDK Path" setting: \n- If you specify an environment variable ANDROID_SDK_ROOT, then you need to restart Blender;\n- If you specify the setting "Android SDK Path", then repeat operation "Publish"')
+
+
+def done_vs_vars():
+    if state.proc_publish_build is None:
+        return
+
+    result = state.proc_publish_build.poll()
+    if result == 0:
+        state.proc_publish_build = None
+
+        wrd = bpy.data.worlds['Arm']
+        success = arm.utils_vs.compile_in_vs(wrd.arm_project_win_list_vs, done_vs_build)
+        if not success:
+            state.proc_publish_build = None
+            state.redraw_ui = True
+            log.error('Compile failed, check console')
+    else:
+        state.proc_publish_build = None
+        state.redraw_ui = True
+        log.error('Compile failed, check console')
+
+
+def done_vs_build():
+    if state.proc_publish_build is None:
+        return
+
+    result = state.proc_publish_build.poll()
+    if result == 0:
+        state.proc_publish_build = None
+
+        wrd = bpy.data.worlds['Arm']
+        project_path = os.path.join(arm.utils.get_fp_build(), arm.utils.get_kha_target(state.target)) + '-build'
+        if wrd.arm_project_win_build_arch == 'x64':
+            path = os.path.join(project_path, 'x64', wrd.arm_project_win_build_mode)
+        else:
+            path = os.path.join(project_path, wrd.arm_project_win_build_mode)
+        print('\nCompilation completed in ' + path)
+        # Run
+        if wrd.arm_project_win_build == 'compile_and_run':
+            # Copying the executable file
+            res_path = os.path.join(arm.utils.get_fp_build(), arm.utils.get_kha_target(state.target))
+            file_name = arm.utils.safesrc(wrd.arm_project_name +'-'+ wrd.arm_project_version) + '.exe'
+            print('\nCopy the executable file from ' + path + ' to ' + res_path)
+            shutil.copyfile(os.path.join(path, file_name), os.path.join(res_path, file_name))
+            path = res_path
+            # Run project
+            cmd = os.path.join('"' + res_path, file_name + '"')
+            print('Run the executable file to ' + cmd)
+            os.chdir(res_path) # set work folder
+            subprocess.Popen(cmd, shell=True)
+        # Open Build Directory
+        if wrd.arm_project_win_build_open:
+            arm.utils.open_folder(path)
+        state.redraw_ui = True
+    else:
+        state.proc_publish_build = None
+        state.redraw_ui = True
+        log.error('Compile failed, check console')
 
 def clean():
     os.chdir(arm.utils.get_fp())
     wrd = bpy.data.worlds['Arm']
 
     # Remove build and compiled data
-    if os.path.isdir(arm.utils.build_dir()):
-        shutil.rmtree(arm.utils.build_dir(), onerror=remove_readonly)
-    if os.path.isdir(arm.utils.get_fp() + '/build'): # Kode Studio build dir
-        shutil.rmtree(arm.utils.get_fp() + '/build', onerror=remove_readonly)
+    try:
+        if os.path.isdir(arm.utils.build_dir()):
+            shutil.rmtree(arm.utils.build_dir(), onerror=remove_readonly)
+        if os.path.isdir(arm.utils.get_fp() + '/build'): # Kode Studio build dir
+            shutil.rmtree(arm.utils.get_fp() + '/build', onerror=remove_readonly)
+    except:
+        print('Armory Warning: Some files in the build folder are locked')
 
     # Remove compiled nodes
     pkg_dir = arm.utils.safestr(wrd.arm_project_package).replace('.', '/')
@@ -560,11 +860,9 @@ def clean():
     if os.path.isdir(nodes_path):
         shutil.rmtree(nodes_path, onerror=remove_readonly)
 
-    # Remove khafile/korefile/Main.hx
+    # Remove khafile/Main.hx
     if os.path.isfile('khafile.js'):
         os.remove('khafile.js')
-    if os.path.isfile('korefile.js'):
-        os.remove('korefile.js')
     if os.path.isfile('Sources/Main.hx'):
         os.remove('Sources/Main.hx')
 
@@ -574,9 +872,17 @@ def clean():
         if os.path.exists('Sources') and os.listdir('Sources') == []:
             shutil.rmtree('Sources/', onerror=remove_readonly)
 
+    # Remove Shape key Textures
+    if os.path.exists('MorphTargets/'):
+        shutil.rmtree('MorphTargets/', onerror=remove_readonly)
+
     # To recache signatures for batched materials
     for mat in bpy.data.materials:
         mat.signature = ''
-        mat.is_cached = False
+        mat.arm_cached = False
+
+    # Restart compilation server
+    if arm.utils.get_compilation_server():
+        arm.lib.server.kill_haxe()
 
     print('Project cleaned')

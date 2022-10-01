@@ -2,10 +2,19 @@ import shutil
 import os
 import stat
 import bpy
+
+import arm.log as log
 import arm.utils
+
+if arm.is_reload(__name__):
+    log = arm.reload_module(log)
+    arm.utils = arm.reload_module(arm.utils)
+else:
+    arm.enable_reload(__name__)
 
 assets = []
 reserved_names = ['return.']
+khafile_params = []
 khafile_defs = []
 khafile_defs_last = []
 embedded_data = []
@@ -19,6 +28,7 @@ shader_cons = {}
 
 def reset():
     global assets
+    global khafile_params
     global khafile_defs
     global khafile_defs_last
     global embedded_data
@@ -29,6 +39,7 @@ def reset():
     global shader_passes
     global shader_cons
     assets = []
+    khafile_params = []
     khafile_defs_last = khafile_defs
     khafile_defs = []
     embedded_data = []
@@ -45,25 +56,36 @@ def reset():
     shader_cons['voxel_frag'] = []
     shader_cons['voxel_geom'] = []
 
-def add(file):
+def add(asset_file):
     global assets
-    if file in assets:
+
+    # Asset already exists, do nothing
+    if asset_file in assets:
         return
-    base = os.path.basename(file)
+
+    asset_file_base = os.path.basename(asset_file)
     for f in assets:
-        if f.endswith(base):
-            print('Armory Warning: Asset name "{0}" already exists, skipping'.format(base))
+        f_file_base = os.path.basename(f)
+        if f_file_base == asset_file_base:
+            log.warn(f'Asset name "{asset_file_base}" already exists, skipping')
             return
-    assets.append(file)
+
+    assets.append(asset_file)
+
     # Reserved file name
     for f in reserved_names:
-        if f in file:
-            print('Armory Warning: File "{0}" contains reserved keyword, this will break C++ builds!'.format(file))
+        if f in asset_file:
+            log.warn(f'File "{asset_file}" contains reserved keyword, this will break C++ builds!')
 
 def add_khafile_def(d):
     global khafile_defs
     if d not in khafile_defs:
         khafile_defs.append(d)
+
+def add_khafile_param(p):
+    global khafile_params
+    if p not in khafile_params:
+        khafile_params.append(p)
 
 def add_embedded_data(file):
     global embedded_data
@@ -105,8 +127,6 @@ def invalidate_shader_cache(self, context):
     global invalidate_enabled
     if invalidate_enabled == False:
         return
-    # import traceback
-    # traceback.print_stack()
     fp = arm.utils.get_fp_build()
     if os.path.isdir(fp + '/compiled/Shaders'):
         shutil.rmtree(fp + '/compiled/Shaders', onerror=remove_readonly)
@@ -145,6 +165,21 @@ def invalidate_unpacked_data(self, context):
     fp = arm.utils.get_fp_build()
     if os.path.isdir(fp + '/compiled/Assets/unpacked'):
         shutil.rmtree(fp + '/compiled/Assets/unpacked', onerror=remove_readonly)
+
+def invalidate_mesh_cache(self, context):
+    if context.object == None or context.object.data == None:
+        return
+    context.object.data.arm_cached = False
+
+def invalidate_instance_cache(self, context):
+    if context.object == None or context.object.data == None:
+        return
+    invalidate_mesh_cache(self, context)
+    for slot in context.object.material_slots:
+        slot.material.arm_cached = False
+
+def invalidate_compiler_cache(self, context):
+    bpy.data.worlds['Arm'].arm_recompile = True
 
 def shader_equal(sh, ar, shtype):
     # Merge equal shaders

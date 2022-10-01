@@ -6,8 +6,6 @@
 #include "std/gbuffer.glsl"
 
 uniform sampler2D gbufferD;
-uniform sampler2D gbuffer0;
-
 uniform sampler2D tex;
 uniform mat4 prevVP;
 uniform vec3 eye;
@@ -20,81 +18,37 @@ in vec3 viewRay;
 out vec4 fragColor;
 
 vec2 getVelocity(vec2 coord, float depth) {
+	#ifdef _InvY
+	coord.y = 1.0 - coord.y;
+	#endif
 	vec4 currentPos = vec4(coord.xy * 2.0 - 1.0, depth, 1.0);
-	vec4 worldPos = vec4(getPos(eye, eyeLook, viewRay, depth, cameraProj), 1.0);
+	vec4 worldPos = vec4(getPos(eye, eyeLook, normalize(viewRay), depth, cameraProj), 1.0);
 	vec4 previousPos = prevVP * worldPos;
 	previousPos /= previousPos.w;
 	vec2 velocity = (currentPos - previousPos).xy / 40.0;
+	#ifdef _InvY
+	velocity.y = -velocity.y;
+	#endif
 	return velocity;
 }
 
 void main() {
-	fragColor.rgb = texture(tex, texCoord).rgb;
-	
-	// Do not blur masked objects
-	if (texture(gbuffer0, texCoord).a == 1.0) {
-		return;
-	}
-	
-	float depth = texture(gbufferD, texCoord).r * 2.0 - 1.0;
+	fragColor.rgb = textureLod(tex, texCoord, 0.0).rgb;
+
+	float depth = textureLod(gbufferD, texCoord, 0.0).r * 2.0 - 1.0;
 	if (depth == 1.0) {
 		return;
 	}
 
 	float blurScale = motionBlurIntensity * frameScale;
 	vec2 velocity = getVelocity(texCoord, depth) * blurScale;
-	
+
 	vec2 offset = texCoord;
 	int processed = 1;
-	// for(int i = 1; i < samples; ++i) {
+	for(int i = 0; i < 8; ++i) {
 		offset += velocity;
-		if (texture(gbuffer0, offset).a != 1.0) {
-			fragColor.rgb += texture(tex, offset).rgb;
-			processed++;
-		}
-
-		offset += velocity;
-		if (texture(gbuffer0, offset).a != 1.0) {
-			fragColor.rgb += texture(tex, offset).rgb;
-			processed++;
-		}
-		
-		offset += velocity;
-		if (texture(gbuffer0, offset).a != 1.0) {
-			fragColor.rgb += texture(tex, offset).rgb;
-			processed++;
-		}
-		
-		offset += velocity;
-		if (texture(gbuffer0, offset).a != 1.0) {
-			fragColor.rgb += texture(tex, offset).rgb;
-			processed++;
-		}
-		
-		offset += velocity;
-		if (texture(gbuffer0, offset).a != 1.0) {
-			fragColor.rgb += texture(tex, offset).rgb;
-			processed++;
-		}
-		
-		offset += velocity;
-		if (texture(gbuffer0, offset).a != 1.0) {
-			fragColor.rgb += texture(tex, offset).rgb;
-			processed++;
-		}
-		
-		offset += velocity;
-		if (texture(gbuffer0, offset).a != 1.0) {
-			fragColor.rgb += texture(tex, offset).rgb;
-			processed++;
-		}
-		
-		offset += velocity;
-		if (texture(gbuffer0, offset).a != 1.0) {
-			fragColor.rgb += texture(tex, offset).rgb;
-			processed++;
-		}
-	// }
-	
+		fragColor.rgb += textureLod(tex, offset, 0.0).rgb;
+		processed++;
+	}
 	fragColor.rgb /= processed;
 }

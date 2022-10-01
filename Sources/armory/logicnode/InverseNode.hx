@@ -4,17 +4,17 @@ class InverseNode extends LogicNode {
 
 	var c = false;
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 		tree.notifyOnUpdate(update);
 	}
 
-	override function run() {
+	override function run(from: Int) {
 		c = true;
 	}
 
 	function update() {
-		if (!c) super.run();
+		if (!c) runOutput(0);
 		c = false;
 	}
 }

@@ -6,23 +6,27 @@ import armory.trait.physics.RigidBody;
 
 class SpawnObjectNode extends LogicNode {
 
-	var object:Object;
+	var object: Object;
+	var matrices: Array<Mat4> = [];
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-
-		var objectName = "";
+	override function run(from: Int) {
 		var objectInput = inputs[1].get();
-		if (objectInput == null) objectName = cast(inputs[1].node, ObjectNode).objectName;
-		else objectName = objectInput.name;
-		if (objectName == "") objectName = tree.object.name;
-		var matrix:Mat4 = inputs[2].get();
+		if (objectInput == null) return;
 
-		iron.Scene.active.spawnObject(objectName, null, function(o:Object) {
+		var objectName = objectInput.name;
+		if (objectName == "") objectName = tree.object.name;
+
+		var m: Mat4 = inputs[2].get();
+		matrices.push(m != null ? m.clone() : null);
+		var spawnChildren: Bool = inputs.length > 3 ? inputs[3].get() : true; // TODO
+
+		iron.Scene.active.spawnObject(objectName, null, function(o: Object) {
 			object = o;
+			var matrix = matrices.pop(); // Async spawn in a loop, order is non-stable
 			if (matrix != null) {
 				object.transform.setMatrix(matrix);
 				#if arm_physics
@@ -34,11 +38,11 @@ class SpawnObjectNode extends LogicNode {
 				#end
 			}
 			object.visible = true;
-			runOutputs(0);
-		});
+			runOutput(0);
+		}, spawnChildren);
 	}
 
-	override function get(from:Int):Dynamic {
+	override function get(from: Int): Dynamic {
 		return object;
 	}
 }

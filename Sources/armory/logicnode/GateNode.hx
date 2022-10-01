@@ -4,24 +4,25 @@ import iron.math.Vec4;
 
 class GateNode extends LogicNode {
 
-	public var property0:String;
-	public var property1:Float;
+	public var property0: String;
+	public var property1: Float;
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-
-		var v1:Dynamic = inputs[1].get();
-		var v2:Dynamic = inputs[2].get();
+	override function run(from: Int) {
+		var v1: Dynamic = inputs[1].get();
+		var v2: Dynamic = inputs[2].get();
 		var cond = false;
 
 		switch (property0) {
 		case "Equal":
-			cond = Std.is(v1, Vec4) ? v1.equals(v2) : v1 == v2;
+			cond = Std.isOfType(v1, Vec4) ? v1.equals(v2) : v1 == v2;
+		case "Not Equal":
+			cond = Std.isOfType(v1, Vec4) ? !v1.equals(v2) : v1 != v2;
 		case "Almost Equal":
-			cond = Std.is(v1, Vec4) ? v1.almostEquals(v2, property1) : Math.abs(v1 - v2) < property1;
+			cond = Std.isOfType(v1, Vec4) ? v1.almostEquals(v2, property1) : Math.abs(v1 - v2) < property1;
 		case "Greater":
 			cond = v1 > v2;
 		case "Greater Equal":
@@ -30,6 +31,9 @@ class GateNode extends LogicNode {
 			cond = v1 < v2;
 		case "Less Equal":
 			cond = v1 <= v2;
+		case "Between":
+			var v3: Dynamic = inputs[3].get();
+			cond = v2 <= v1 && v1 <= v3;
 		case "Or":
 			for (i in 1...inputs.length) {
 				if (inputs[i].get()) {
@@ -47,6 +51,6 @@ class GateNode extends LogicNode {
 			}
 		}
 
-		cond ? runOutputs(0) : runOutputs(1);
+		cond ? runOutput(0) : runOutput(1);
 	}
 }

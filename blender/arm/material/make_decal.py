@@ -1,15 +1,28 @@
+import bpy
+
 import arm.material.cycles as cycles
 import arm.material.mat_state as mat_state
-import arm.material.mat_utils as mat_utils
-import arm.material.make_mesh as make_mesh
+import arm.material.make_finalize as make_finalize
 import arm.utils
 
+if arm.is_reload(__name__):
+    cycles = arm.reload_module(cycles)
+    mat_state = arm.reload_module(mat_state)
+    make_finalize = arm.reload_module(make_finalize)
+    arm.utils = arm.reload_module(arm.utils)
+else:
+    arm.enable_reload(__name__)
+
+
 def make(context_id):
-    con_decal = mat_state.data.add_context({ 'name': context_id, 'depth_write': False, 'compare_mode': 'less', 'cull_mode': 'clockwise',
+    wrd = bpy.data.worlds['Arm']
+
+    vs = [{'name': 'pos', 'data': 'float3'}]
+    con_decal = mat_state.data.add_context({ 'name': context_id, 'vertex_elements': vs, 'depth_write': False, 'compare_mode': 'less', 'cull_mode': 'clockwise',
         'blend_source': 'source_alpha',
         'blend_destination': 'inverse_source_alpha',
         'blend_operation': 'add',
-        'color_write_alpha': False
+        'color_writes_alpha': [False, False]
     })
 
     vert = con_decal.make_vert()
@@ -24,23 +37,26 @@ def make(context_id):
     vert.add_out('vec3 wnormal')
 
     vert.write('wnormal = N * vec3(0.0, 0.0, 1.0);')
-    vert.write('wvpposition = WVP * vec4(pos, 1.0);')
+    vert.write('wvpposition = WVP * vec4(pos.xyz, 1.0);')
     vert.write('gl_Position = wvpposition;')
-    
+
     frag.add_include('compiled.inc')
     frag.add_include('std/gbuffer.glsl')
     frag.ins = vert.outs
     frag.add_uniform('sampler2D gbufferD')
     frag.add_uniform('mat4 invVP', '_inverseViewProjectionMatrix')
     frag.add_uniform('mat4 invW', '_inverseWorldMatrix')
-    frag.add_out('vec4[2] fragColor')
+    frag.add_out('vec4 fragColor[2]')
 
     frag.write_attrib('    vec3 n = normalize(wnormal);')
 
     frag.write_attrib('    vec2 screenPosition = wvpposition.xy / wvpposition.w;')
     frag.write_attrib('    vec2 depthCoord = screenPosition * 0.5 + 0.5;')
+    frag.write_attrib('#ifdef _InvY')
+    frag.write_attrib('    depthCoord.y = 1.0 - depthCoord.y;')
+    frag.write_attrib('#endif')
     frag.write_attrib('    float depth = texture(gbufferD, depthCoord).r * 2.0 - 1.0;')
-    
+
     frag.write_attrib('    vec3 wpos = getPos2(invVP, depth, depthCoord);')
     frag.write_attrib('    vec4 mpos = invW * vec4(wpos, 1.0);')
     frag.write_attrib('    if (abs(mpos.x) > 1.0) discard;')
@@ -53,19 +69,16 @@ def make(context_id):
     frag.write('float metallic;')
     frag.write('float occlusion;')
     frag.write('float specular;')
-    cycles.parse(mat_state.nodes, con_decal, vert, frag, geom, tesc, tese, parse_opacity=False)
+    frag.write('float opacity;')
+    if '_Emission' in wrd.world_defs:
+        frag.write('float emission;')
+    cycles.parse(mat_state.nodes, con_decal, vert, frag, geom, tesc, tese)
 
     frag.write('n /= (abs(n.x) + abs(n.y) + abs(n.z));')
     frag.write('n.xy = n.z >= 0.0 ? n.xy : octahedronWrap(n.xy);')
-    
-    if cycles.basecol_texname == '':
-        frag.write('const float alpha = 1.0;')
-    else:
-        frag.write('const float alpha = {0}.a;'.format(cycles.basecol_texname))
+    frag.write('fragColor[0] = vec4(n.xy, roughness, opacity);')
+    frag.write('fragColor[1] = vec4(basecol.rgb, opacity);')
 
-    frag.write('fragColor[0] = vec4(n.xy, packFloat(metallic, roughness), alpha);')
-    frag.write('fragColor[1] = vec4(basecol.rgb, alpha);')
-
-    make_mesh.make_finalize(con_decal)
+    make_finalize.make(con_decal)
 
     return con_decal

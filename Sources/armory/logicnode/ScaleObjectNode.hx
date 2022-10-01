@@ -1,19 +1,18 @@
 package armory.logicnode;
 
 import iron.object.Object;
-import iron.math.Mat4;
 import iron.math.Vec4;
 import armory.trait.physics.RigidBody;
 
 class ScaleObjectNode extends LogicNode {
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-		var object:Object = inputs[1].get();
-		var vec:Vec4 = inputs[2].get();
+	override function run(from: Int) {
+		var object: Object = inputs[1].get();
+		var vec: Vec4 = inputs[2].get();
 
 		if (object == null || vec == null) return;
 
@@ -25,6 +24,6 @@ class ScaleObjectNode extends LogicNode {
 		if (rigidBody != null) rigidBody.syncTransform();
 		#end
 
-		super.run();
+		runOutput(0);
 	}
 }

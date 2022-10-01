@@ -15,26 +15,27 @@ vec3 getNor(const vec2 enc) {
 
 vec3 getPosView(const vec3 viewRay, const float depth, const vec2 cameraProj) {
 	float linearDepth = cameraProj.y / (cameraProj.x - depth);
+	// float linearDepth = cameraProj.y / ((depth * 0.5 + 0.5) - cameraProj.x);
 	return viewRay * linearDepth;
 }
 
-vec3 getPos(const vec3 eye, const vec3 eyeLook, const vec3 viewRay, const float depth, const vec2 cameraProj) {	
-	vec3 vray = normalize(viewRay);
+vec3 getPos(const vec3 eye, const vec3 eyeLook, const vec3 viewRay, const float depth, const vec2 cameraProj) {
+	// eyeLook, viewRay should be normalized
 	float linearDepth = cameraProj.y / ((depth * 0.5 + 0.5) - cameraProj.x);
-	float viewZDist = dot(eyeLook, vray);
-	vec3 wposition = eye + vray * (linearDepth / viewZDist);
+	float viewZDist = dot(eyeLook, viewRay);
+	vec3 wposition = eye + viewRay * (linearDepth / viewZDist);
 	return wposition;
 }
 
-vec3 getPosNoEye(const vec3 eyeLook, const vec3 viewRay, const float depth, const vec2 cameraProj) {	
-	vec3 vray = normalize(viewRay);
+vec3 getPosNoEye(const vec3 eyeLook, const vec3 viewRay, const float depth, const vec2 cameraProj) {
+	// eyeLook, viewRay should be normalized
 	float linearDepth = cameraProj.y / ((depth * 0.5 + 0.5) - cameraProj.x);
-	float viewZDist = dot(eyeLook, vray);
-	vec3 wposition = vray * (linearDepth / viewZDist);
+	float viewZDist = dot(eyeLook, viewRay);
+	vec3 wposition = viewRay * (linearDepth / viewZDist);
 	return wposition;
 }
 
-#ifdef _InvY
+#if defined(HLSL) || defined(METAL)
 vec3 getPos2(const mat4 invVP, const float depth, vec2 coord) {
 	coord.y = 1.0 - coord.y;
 #else
@@ -46,7 +47,7 @@ vec3 getPos2(const mat4 invVP, const float depth, const vec2 coord) {
 	return pos.xyz;
 }
 
-#ifdef _InvY
+#if defined(HLSL) || defined(METAL)
 vec3 getPosView2(const mat4 invP, const float depth, vec2 coord) {
 	coord.y = 1.0 - coord.y;
 #else
@@ -58,7 +59,7 @@ vec3 getPosView2(const mat4 invP, const float depth, const vec2 coord) {
 	return pos.xyz;
 }
 
-#ifdef _InvY
+#if defined(HLSL) || defined(METAL)
 vec3 getPos2NoEye(const vec3 eye, const mat4 invVP, const float depth, vec2 coord) {
 	coord.y = 1.0 - coord.y;
 #else
@@ -97,7 +98,7 @@ vec4 encodeRGBM(const vec3 rgb) {
 
 vec3 decodeRGBM(const vec4 rgbm) {
 	const float maxRange = 6.0;
-    return rgbm.rgb * rgbm.a * maxRange;
+	return rgbm.rgb * rgbm.a * maxRange;
 }
 
 uint encNor(vec3 n) {
@@ -124,6 +125,29 @@ vec3 decNor(uint val) {
 	vec3 normal = vec3(nor) / 255.0f;
 	normal *= norSigns;
 	return normal;
+}
+
+/**
+	Packs a float in [0, 1] and an integer in [0..15] into a single 16 bit float value.
+**/
+float packFloatInt16(const float f, const uint i) {
+	const uint numBitFloat = 12;
+	const float maxValFloat = float((1 << numBitFloat) - 1);
+
+	const uint bitsInt = i << numBitFloat;
+	const uint bitsFloat = uint(f * maxValFloat);
+
+	return float(bitsInt | bitsFloat);
+}
+
+void unpackFloatInt16(const float val, out float f, out uint i) {
+	const uint numBitFloat = 12;
+	const float maxValFloat = float((1 << numBitFloat) - 1);
+
+	const uint bitsValue = uint(val);
+
+	i = bitsValue >> numBitFloat;
+	f = (bitsValue & ~(0xF << numBitFloat)) / maxValFloat;
 }
 
 #endif

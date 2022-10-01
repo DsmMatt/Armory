@@ -2,15 +2,22 @@ package armory.logicnode;
 
 class RemoveGroupNode extends LogicNode {
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-		var groupName:String = inputs[1].get();
-		
-		iron.Scene.active.groups.remove(groupName);
+	override function run(from: Int) {
+		var groupName: String = inputs[1].get();
+		var raw = iron.Scene.active.raw;
 
-		super.run();
+		for (g in raw.groups) {
+			if (g.name == groupName) {
+				raw.groups.remove(g);
+				@:privateAccess iron.Scene.active.groups.remove(groupName);
+				break;
+			}
+		}
+
+		runOutput(0);
 	}
 }

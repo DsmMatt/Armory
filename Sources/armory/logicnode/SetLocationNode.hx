@@ -6,15 +6,27 @@ import armory.trait.physics.RigidBody;
 
 class SetLocationNode extends LogicNode {
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-		var object:Object = inputs[1].get();
-		var vec:Vec4 = inputs[2].get();
+	override function run(from: Int) {
+		var object: Object = inputs[1].get();
+		var vec: Vec4 = inputs[2].get();
+		var relative: Bool = inputs[3].get();
 
 		if (object == null || vec == null) return;
+
+		if (!relative && object.parent != null) {
+			var loc = vec.clone();
+			loc.sub(object.parent.transform.world.getLoc()); // Remove parent location influence
+
+			// Convert vec to parent local space
+			var dotX = loc.dot(object.parent.transform.right());
+			var dotY = loc.dot(object.parent.transform.look());
+			var dotZ = loc.dot(object.parent.transform.up());
+			vec.set(dotX, dotY, dotZ);
+		}
 
 		object.transform.loc.setFrom(vec);
 		object.transform.buildMatrix();
@@ -24,6 +36,6 @@ class SetLocationNode extends LogicNode {
 		if (rigidBody != null) rigidBody.syncTransform();
 		#end
 
-		super.run();
+		runOutput(0);
 	}
 }

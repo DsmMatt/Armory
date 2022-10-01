@@ -1,22 +1,15 @@
 #version 450
 
 #include "compiled.inc"
-#include "std/brdf.glsl"
-#include "std/math.glsl"
-#ifdef _LightIES
-#include "std/ies.glsl"
+#include "std/gbuffer.glsl"
+#ifdef _Clusters
+#include "std/clusters.glsl"
 #endif
-#ifdef _VoxelGIDirect
-	#include "std/conetrace.glsl"
+#ifdef _Irr
+#include "std/shirr.glsl"
 #endif
-#ifdef _LTC
-	#include "std/ltc.glsl"
-#endif
-#ifndef _NoShadows
-	#include "std/shadows.glsl"
-#endif
-#ifdef _DFRS
-#include "std/sdf.glsl"
+#ifdef _VoxelAOvar
+#include "std/conetrace.glsl"
 #endif
 #ifdef _SSS
 #include "std/sss.glsl"
@@ -24,237 +17,479 @@
 #ifdef _SSRS
 #include "std/ssrs.glsl"
 #endif
-#include "std/gbuffer.glsl"
 
-#ifdef _VoxelGIDirect
-	uniform sampler3D voxels;
-#endif
-#ifdef _VoxelGICam
-	uniform vec3 eyeSnap;
-#endif
-
-// uniform sampler2D gbufferD;
+uniform sampler2D gbufferD;
 uniform sampler2D gbuffer0;
 uniform sampler2D gbuffer1;
-#ifdef _gbuffer2direct
+#ifdef _gbuffer2
 uniform sampler2D gbuffer2;
 #endif
 
-// TODO: separate shaders
-#ifndef _NoShadows
-	#ifdef _SoftShadows
-		uniform sampler2D svisibility;
-	#else
-		uniform sampler2D shadowMap;
-		uniform samplerCube shadowMapCube;
-	#endif
+#ifdef _VoxelAOvar
+uniform sampler3D voxels;
 #endif
-#ifdef _DFRS
-	//!uniform sampler3D sdftex;
+#ifdef _VoxelGITemporal
+uniform sampler3D voxelsLast;
+uniform float voxelBlend;
 #endif
-#ifdef _LightIES
-	//!uniform sampler2D texIES;
+#ifdef _VoxelGICam
+uniform vec3 eyeSnap;
+#endif
+
+uniform float envmapStrength;
+#ifdef _Irr
+uniform vec4 shirr[7];
+#endif
+#ifdef _Brdf
+uniform sampler2D senvmapBrdf;
+#endif
+#ifdef _Rad
+uniform sampler2D senvmapRadiance;
+uniform int envmapNumMipmaps;
+#endif
+#ifdef _EnvCol
+uniform vec3 backgroundCol;
+#endif
+
+#ifdef _SSAO
+uniform sampler2D ssaotex;
 #endif
 
 #ifdef _SSS
-vec2 lightPlane;
+uniform vec2 lightPlane;
 #endif
 
-uniform mat4 invVP;
-uniform mat4 LWVP;
-uniform vec3 lightColor;
-uniform vec3 lightDir;
-uniform vec3 lightPos;
-uniform vec2 lightProj;
-uniform int lightType;
-uniform int lightShadow;
-uniform float shadowsBias;
-uniform vec2 spotlightData;
-#ifdef _LTC
-	uniform vec3 lightArea0;
-	uniform vec3 lightArea1;
-	uniform vec3 lightArea2;
-	uniform vec3 lightArea3;
-	uniform sampler2D sltcMat;
-	uniform sampler2D sltcMag;
-#endif
-uniform vec3 eye;
 #ifdef _SSRS
-	//!uniform mat4 VP;
+//!uniform mat4 VP;
+uniform mat4 invVP;
 #endif
 
-#ifdef _LightColTex
-	uniform sampler2D texlightcolor;
+#ifdef _LightIES
+//!uniform sampler2D texIES;
 #endif
 
-in vec4 wvpposition;
+#ifdef _SMSizeUniform
+//!uniform vec2 smSizeUniform;
+#endif
+
+#ifdef _LTC
+//!uniform vec3 lightArea0;
+//!uniform vec3 lightArea1;
+//!uniform vec3 lightArea2;
+//!uniform vec3 lightArea3;
+//!uniform sampler2D sltcMat;
+//!uniform sampler2D sltcMag;
+#ifdef _ShadowMap
+	#ifdef _SinglePoint
+	//!uniform sampler2DShadow shadowMapSpot[1];
+	//!uniform mat4 LWVPSpot[1];
+	#endif
+	#ifdef _Clusters
+	//!uniform sampler2DShadow shadowMapSpot[4];
+	//!uniform mat4 LWVPSpotArray[4];
+	#endif
+#endif
+#endif
+
+uniform vec2 cameraProj;
+uniform vec3 eye;
+uniform vec3 eyeLook;
+
+#ifdef _Clusters
+uniform vec4 lightsArray[maxLights * 3];
+	#ifdef _Spot
+	uniform vec4 lightsArraySpot[maxLights * 2];
+	#endif
+uniform sampler2D clustersData;
+uniform vec2 cameraPlane;
+#endif
+
+#ifdef _ShadowMap
+#ifdef _SinglePoint
+	#ifdef _Spot
+	//!uniform sampler2DShadow shadowMapSpot[1];
+	//!uniform mat4 LWVPSpot[1];
+	#else
+	//!uniform samplerCubeShadow shadowMapPoint[1];
+	//!uniform vec2 lightProj;
+	#endif
+#endif
+#ifdef _Clusters
+	#ifdef _ShadowMapAtlas
+		#ifdef _SingleAtlas
+		uniform sampler2DShadow shadowMapAtlas;
+		#endif
+	#endif
+	#ifdef _ShadowMapAtlas
+		#ifndef _SingleAtlas
+		//!uniform sampler2DShadow shadowMapAtlasPoint;
+		#endif
+		//!uniform vec4 pointLightDataArray[4];
+	#else
+		//!uniform samplerCubeShadow shadowMapPoint[4];
+	#endif
+	//!uniform vec2 lightProj;
+	#ifdef _Spot
+		#ifdef _ShadowMapAtlas
+		#ifndef _SingleAtlas
+		//!uniform sampler2DShadow shadowMapAtlasSpot;
+		#endif
+		#else
+		//!uniform sampler2DShadow shadowMapSpot[4];
+		#endif
+	//!uniform mat4 LWVPSpotArray[4];
+	#endif
+#endif
+#endif
+
+#ifdef _Sun
+uniform vec3 sunDir;
+uniform vec3 sunCol;
+	#ifdef _ShadowMap
+	#ifdef _ShadowMapAtlas
+	#ifndef _SingleAtlas
+	uniform sampler2DShadow shadowMapAtlasSun;
+	#endif
+	#else
+	uniform sampler2DShadow shadowMap;
+	#endif
+	uniform float shadowsBias;
+	#ifdef _CSM
+	//!uniform vec4 casData[shadowmapCascades * 4 + 4];
+	#else
+	uniform mat4 LWVP;
+	#endif
+	#endif // _ShadowMap
+#endif
+
+#ifdef _SinglePoint // Fast path for single light
+uniform vec3 pointPos;
+uniform vec3 pointCol;
+	#ifdef _ShadowMap
+	uniform float pointBias;
+	#endif
+	#ifdef _Spot
+	uniform vec3 spotDir;
+	uniform vec3 spotRight;
+	uniform vec4 spotData;
+	#endif
+#endif
+
+#ifdef _LightClouds
+uniform sampler2D texClouds;
+uniform float time;
+#endif
+
+#include "std/light.glsl"
+
+in vec2 texCoord;
+in vec3 viewRay;
 out vec4 fragColor;
 
 void main() {
-	vec2 texCoord = wvpposition.xy / wvpposition.w;
-	texCoord = texCoord * 0.5 + 0.5;
-	#ifdef _InvY
-	texCoord.y = 1.0 - texCoord.y;
-	#endif
-
-	vec4 g0 = texture(gbuffer0, texCoord); // Normal.xy, metallic/roughness, depth
-	vec4 g1 = texture(gbuffer1, texCoord); // Basecolor.rgb, spec/occ
-	float spec = unpackFloat2(g1.a).g;
-	// #ifdef _InvY // D3D
-	// float depth = texture(gbufferD, texCoord).r * 2.0 - 1.0; // 0 - 1 => -1 - 1
-	// #else
-	// TODO: store_depth
-	float depth = (1.0 - g0.a) * 2.0 - 1.0;
-	// #endif
+	vec4 g0 = textureLod(gbuffer0, texCoord, 0.0); // Normal.xy, roughness, metallic/matid
 
 	vec3 n;
 	n.z = 1.0 - abs(g0.x) - abs(g0.y);
 	n.xy = n.z >= 0.0 ? g0.xy : octahedronWrap(g0.xy);
 	n = normalize(n);
 
-	vec3 p = getPos2(invVP, depth, texCoord);
-	vec2 metrough = unpackFloat(g0.b);
-	
+	float roughness = g0.b;
+	float metallic;
+	uint matid;
+	unpackFloatInt16(g0.a, metallic, matid);
+
+	vec4 g1 = textureLod(gbuffer1, texCoord, 0.0); // Basecolor.rgb, spec/occ
+	vec2 occspec = unpackFloat2(g1.a);
+	vec3 albedo = surfaceAlbedo(g1.rgb, metallic); // g1.rgb - basecolor
+	vec3 f0 = surfaceF0(g1.rgb, metallic);
+
+	float depth = textureLod(gbufferD, texCoord, 0.0).r * 2.0 - 1.0;
+	vec3 p = getPos(eye, eyeLook, normalize(viewRay), depth, cameraProj);
 	vec3 v = normalize(eye - p);
-	float dotNV = dot(n, v);
-	
-	vec3 albedo = surfaceAlbedo(g1.rgb, metrough.x); // g1.rgb - basecolor
-	vec3 f0 = surfaceF0(g1.rgb, metrough.x);
-	
-	vec3 lp = lightPos - p;
-	vec3 l = normalize(lp);
-	vec3 h = normalize(v + l);
-	float dotNH = dot(n, h);
-	float dotVH = dot(v, h);
-	float dotNL = dot(n, l);
+	float dotNV = max(dot(n, v), 0.0);
 
-	float visibility = 1.0;
-
-#ifndef _NoShadows
-
-	#ifdef _SoftShadows
-
-	visibility = texture(svisibility, texCoord).r;
-
-	#else
-
-	if (lightShadow == 1) {
-		vec4 lPos = LWVP * vec4(p + n * shadowsBias * 10, 1.0);
-		if (lPos.w > 0.0) {
-			visibility = shadowTest(shadowMap, lPos.xyz / lPos.w, shadowsBias, shadowmapSize);
-		}
-	}
-	else if (lightShadow == 2) { // Cube
-		visibility = PCFCube(shadowMapCube, lp, -l, shadowsBias, lightProj, n);
-	}
-	#endif
-
+#ifdef _gbuffer2
+	vec4 g2 = textureLod(gbuffer2, texCoord, 0.0);
 #endif
 
-	
-#ifdef _VoxelGIShadow // #else
+#ifdef _MicroShadowing
+	occspec.x = mix(1.0, occspec.x, dotNV); // AO Fresnel
+#endif
+
+#ifdef _Brdf
+	vec2 envBRDF = textureLod(senvmapBrdf, vec2(roughness, 1.0 - dotNV), 0.0).xy;
+#endif
+
+	// Envmap
+#ifdef _Irr
+
+	vec3 envl = shIrradiance(n, shirr);
+
+	#ifdef _gbuffer2
+		if (g2.b < 0.5) {
+			envl = envl;
+		} else {
+			envl = vec3(1.0);
+		}
+	#endif
+
+	#ifdef _EnvTex
+		envl /= PI;
+	#endif
+#else
+	vec3 envl = vec3(1.0);
+#endif
+
+#ifdef _Rad
+	vec3 reflectionWorld = reflect(-v, n);
+	float lod = getMipFromRoughness(roughness, envmapNumMipmaps);
+	vec3 prefilteredColor = textureLod(senvmapRadiance, envMapEquirect(reflectionWorld), lod).rgb;
+#endif
+
+#ifdef _EnvLDR
+	envl.rgb = pow(envl.rgb, vec3(2.2));
+	#ifdef _Rad
+		prefilteredColor = pow(prefilteredColor, vec3(2.2));
+	#endif
+#endif
+
+	envl.rgb *= albedo;
+
+#ifdef _Rad // Indirect specular
+	envl.rgb += prefilteredColor * (f0 * envBRDF.x + envBRDF.y) * 1.5 * occspec.y;
+#else
+	#ifdef _EnvCol
+	envl.rgb += backgroundCol * surfaceF0(g1.rgb, metallic); // f0
+	#endif
+#endif
+
+	envl.rgb *= envmapStrength * occspec.x;
+
+#ifdef _VoxelAOvar
+
 	#ifdef _VoxelGICam
 	vec3 voxpos = (p - eyeSnap) / voxelgiHalfExtents;
 	#else
 	vec3 voxpos = p / voxelgiHalfExtents;
 	#endif
-	if (dotNL > 0.0) visibility = max(0, 1.0 - traceShadow(voxels, voxpos, l, 0.1, length(lp), n));
+
+	#ifndef _VoxelAONoTrace
+	#ifdef _VoxelGITemporal
+	envl.rgb *= 1.0 - (traceAO(voxpos, n, voxels) * voxelBlend +
+					   traceAO(voxpos, n, voxelsLast) * (1.0 - voxelBlend));
+	#else
+	envl.rgb *= 1.0 - traceAO(voxpos, n, voxels);
+	#endif
+	#endif
+
 #endif
 
+	fragColor.rgb = envl;
 
-#ifdef _DFRS
-	visibility = dfrs(p, l, lightPos);
+#ifdef _SSAO
+	// #ifdef _RTGI
+	// fragColor.rgb *= textureLod(ssaotex, texCoord, 0.0).rgb;
+	// #else
+	fragColor.rgb *= textureLod(ssaotex, texCoord, 0.0).r;
+	// #endif
 #endif
 
-	visibility *= attenuate(distance(p, lightPos));
-
-#ifdef _LightIES
-	visibility *= iesAttenuation(-l);
-#endif
-	if (lightType == 2) { // Spot
-		float spotEffect = dot(lightDir, l);
-		// x - cutoff, y - cutoff - exponent
-		if (spotEffect < spotlightData.x) {
-			visibility *= smoothstep(spotlightData.y, spotlightData.x, spotEffect);
-		}
-	}
-
-#ifdef _LTC
-	if (lightType == 3) { // Area
-		float theta = acos(dotNV);
-		vec2 tuv = vec2(metrough.y, theta / (0.5 * PI));
-		tuv = tuv * LUT_SCALE + LUT_BIAS;
-		vec4 t = texture(sltcMat, tuv);
-		mat3 invM = mat3(
-			vec3(1.0, 0.0, t.y),
-			vec3(0.0, t.z, 0.0),
-			vec3(t.w, 0.0, t.x));
-
-		float ltcspec = ltcEvaluate(n, v, dotNV, p, invM, lightArea0, lightArea1, lightArea2, lightArea3);
-		ltcspec *= texture(sltcMag, tuv).a;
-		float ltcdiff = ltcEvaluate(n, v, dotNV, p, mat3(1.0), lightArea0, lightArea1, lightArea2, lightArea3);
-		fragColor.rgb = albedo * ltcdiff + ltcspec * spec;
-	}
-	else {
-#endif
-
-#ifdef _Hair // Aniso
-	if (texture(gbuffer2, texCoord).a == 2) {
-		const float shinyParallel = metrough.y;
-		const float shinyPerpendicular = 0.1;
-		const vec3 v = vec3(0.99146, 0.11664, 0.05832);
-		vec3 T = abs(dot(n, v)) > 0.99999 ? cross(n, vec3(0.0, 1.0, 0.0)) : cross(n, v);
-		fragColor.rgb = orenNayarDiffuseBRDF(albedo, metrough.y, dotNV, dotNL, dotVH) + wardSpecular(n, h, dotNL, dotNV, dotNH, T, shinyParallel, shinyPerpendicular) * spec;
-	}
-	else fragColor.rgb = lambertDiffuseBRDF(albedo, dotNL) + specularBRDF(f0, metrough.y, dotNL, dotNH, dotNV, dotVH) * spec;
-#else
-#ifdef _OrenNayar
-	fragColor.rgb = orenNayarDiffuseBRDF(albedo, metrough.y, dotNV, dotNL, dotVH) + specularBRDF(f0, metrough.y, dotNL, dotNH, dotNV, dotVH) * spec;
-#else
-	fragColor.rgb = lambertDiffuseBRDF(albedo, dotNL) + specularBRDF(f0, metrough.y, dotNL, dotNH, dotNV, dotVH) * spec;
-#endif
-#endif
-
-#ifdef _LTC
-	}
-#endif
-	
-#ifdef _Hair // Aniso
-	
-#endif
-
-	fragColor.rgb *= lightColor;
-
-#ifdef _LightColTex
-	// fragColor.rgb *= texture(texlightcolor, envMapEquirect(l)).rgb;
-	fragColor.rgb *= pow(texture(texlightcolor, l.xy).rgb, vec3(2.2));
-#endif
-	
-#ifdef _SSS
-	if (texture(gbuffer2, texCoord).a == 2) {
-		if (lightShadow == 1) fragColor.rgb += fragColor.rgb * SSSSTransmittance(LWVP, p, n, l, lightPlane.y, shadowMap);
-		// else fragColor.rgb += fragColor.rgb * SSSSTransmittanceCube();
+#ifdef _Emission
+	if (matid == 1) {
+		fragColor.rgb += g1.rgb; // materialid
+		albedo = vec3(0.0);
 	}
 #endif
 
-#ifdef _SSRS
-	float tvis = traceShadowSS(-l, p, gbuffer0, invVP, eye);
+	// Show voxels
+	// vec3 origin = vec3(texCoord * 2.0 - 1.0, 0.99);
+	// vec3 direction = vec3(0.0, 0.0, -1.0);
+	// vec4 color = vec4(0.0f);
+	// for(uint step = 0; step < 400 && color.a < 0.99f; ++step) {
+	// 	vec3 point = origin + 0.005 * step * direction;
+	// 	color += (1.0f - color.a) * textureLod(voxels, point * 0.5 + 0.5, 0);
+	// }
+	// fragColor.rgb += color.rgb;
+
+	// Show SSAO
+	// fragColor.rgb = texture(ssaotex, texCoord).rrr;
+
+#ifdef _Sun
+	vec3 sh = normalize(v + sunDir);
+	float sdotNH = dot(n, sh);
+	float sdotVH = dot(v, sh);
+	float sdotNL = dot(n, sunDir);
+	float svisibility = 1.0;
+	vec3 sdirect = lambertDiffuseBRDF(albedo, sdotNL) +
+				   specularBRDF(f0, roughness, sdotNL, sdotNH, dotNV, sdotVH) * occspec.y;
+
+	#ifdef _ShadowMap
+		#ifdef _CSM
+			svisibility = shadowTestCascade(
+				#ifdef _ShadowMapAtlas
+					#ifndef _SingleAtlas
+					shadowMapAtlasSun
+					#else
+					shadowMapAtlas
+					#endif
+				#else
+				shadowMap
+				#endif
+				, eye, p + n * shadowsBias * 10, shadowsBias
+			);
+		#else
+			vec4 lPos = LWVP * vec4(p + n * shadowsBias * 100, 1.0);
+			if (lPos.w > 0.0) svisibility = shadowTest(
+				#ifdef _ShadowMapAtlas
+					#ifndef _SingleAtlas
+					shadowMapAtlasSun
+					#else
+					shadowMapAtlas
+					#endif
+				#else
+				shadowMap
+				#endif
+				, lPos.xyz / lPos.w, shadowsBias
+			);
+		#endif
+	#endif
+
+	#ifdef _VoxelAOvar
+	#ifdef _VoxelShadow
+	svisibility *= 1.0 - traceShadow(voxels, voxpos, sunDir);
+	#endif
+	#endif
+
+	#ifdef _SSRS
 	// vec2 coords = getProjectedCoord(hitCoord);
 	// vec2 deltaCoords = abs(vec2(0.5, 0.5) - coords.xy);
 	// float screenEdgeFactor = clamp(1.0 - (deltaCoords.x + deltaCoords.y), 0.0, 1.0);
-	// tvis *= screenEdgeFactor;
-	visibility *= tvis;
-#endif
-
-	fragColor.rgb *= visibility;
-
-#ifdef _VoxelGIRefract
-	#ifdef _VoxelGICam
-	vec3 voxposr = (p - eyeSnap) / voxelgiHalfExtents;
-	#else
-	vec3 voxposr = p / voxelgiHalfExtents;
+	svisibility *= traceShadowSS(sunDir, p, gbufferD, invVP, eye);
 	#endif
-	float opac = texture(gbuffer2, texCoord).b;
-	fragColor.rgb = mix(traceRefraction(voxels, voxposr, n, -v, metrough.y), fragColor.rgb, opac);
+
+	#ifdef _LightClouds
+	svisibility *= textureLod(texClouds, vec2(p.xy / 100.0 + time / 80.0), 0.0).r * dot(n, vec3(0,0,1));
+	#endif
+
+	#ifdef _MicroShadowing
+	svisibility *= sdotNL + 2.0 * occspec.x * occspec.x - 1.0;
+	#endif
+
+	fragColor.rgb += sdirect * svisibility * sunCol;
+
+//	#ifdef _Hair // Aniso
+// 	if (matid == 2) {
+// 		const float shinyParallel = roughness;
+// 		const float shinyPerpendicular = 0.1;
+// 		const vec3 v = vec3(0.99146, 0.11664, 0.05832);
+// 		vec3 T = abs(dot(n, v)) > 0.99999 ? cross(n, vec3(0.0, 1.0, 0.0)) : cross(n, v);
+// 		fragColor.rgb = orenNayarDiffuseBRDF(albedo, roughness, dotNV, dotNL, dotVH) + wardSpecular(n, h, dotNL, dotNV, dotNH, T, shinyParallel, shinyPerpendicular) * spec;
+// 	}
+//	#endif
+
+	#ifdef _SSS
+	if (matid == 2) {
+		#ifdef _CSM
+		int casi, casindex;
+		mat4 LWVP = getCascadeMat(distance(eye, p), casi, casindex);
+		#endif
+		fragColor.rgb += fragColor.rgb * SSSSTransmittance(
+			LWVP, p, n, sunDir, lightPlane.y,
+			#ifdef _ShadowMapAtlas
+				#ifndef _SingleAtlas
+				shadowMapAtlasSun
+				#else
+				shadowMapAtlas
+				#endif
+			#else
+			shadowMap
+			#endif
+		);
+	}
+	#endif
+
+#endif // _Sun
+
+#ifdef _SinglePoint
+
+	fragColor.rgb += sampleLight(
+		p, n, v, dotNV, pointPos, pointCol, albedo, roughness, occspec.y, f0
+		#ifdef _ShadowMap
+			, 0, pointBias, true
+		#endif
+		#ifdef _Spot
+		, true, spotData.x, spotData.y, spotDir, spotData.zw, spotRight
+		#endif
+		#ifdef _VoxelAOvar
+		#ifdef _VoxelShadow
+		, voxels, voxpos
+		#endif
+		#endif
+		#ifdef _MicroShadowing
+		, occspec.x
+		#endif
+		#ifdef _SSRS
+		, gbufferD, invVP, eye
+		#endif
+	);
+
+	#ifdef _Spot
+	#ifdef _SSS
+	if (matid == 2) fragColor.rgb += fragColor.rgb * SSSSTransmittance(LWVPSpot0, p, n, normalize(pointPos - p), lightPlane.y, shadowMapSpot[0]);
+	#endif
+	#endif
+
 #endif
+
+#ifdef _Clusters
+	float viewz = linearize(depth * 0.5 + 0.5, cameraProj);
+	int clusterI = getClusterI(texCoord, viewz, cameraPlane);
+	int numLights = int(texelFetch(clustersData, ivec2(clusterI, 0), 0).r * 255);
+
+	#ifdef HLSL
+	viewz += textureLod(clustersData, vec2(0.0), 0.0).r * 1e-9; // TODO: krafix bug, needs to generate sampler
+	#endif
+
+	#ifdef _Spot
+	int numSpots = int(texelFetch(clustersData, ivec2(clusterI, 1 + maxLightsCluster), 0).r * 255);
+	int numPoints = numLights - numSpots;
+	#endif
+
+	for (int i = 0; i < min(numLights, maxLightsCluster); i++) {
+		int li = int(texelFetch(clustersData, ivec2(clusterI, i + 1), 0).r * 255);
+		fragColor.rgb += sampleLight(
+			p,
+			n,
+			v,
+			dotNV,
+			lightsArray[li * 3].xyz, // lp
+			lightsArray[li * 3 + 1].xyz, // lightCol
+			albedo,
+			roughness,
+			occspec.y,
+			f0
+			#ifdef _ShadowMap
+				// light index, shadow bias, cast_shadows
+				, li, lightsArray[li * 3 + 2].x, lightsArray[li * 3 + 2].z != 0.0
+			#endif
+			#ifdef _Spot
+			, lightsArray[li * 3 + 2].y != 0.0
+			, lightsArray[li * 3 + 2].y // spot size (cutoff)
+			, lightsArraySpot[li * 2].w // spot blend (exponent)
+			, lightsArraySpot[li * 2].xyz // spotDir
+			, vec2(lightsArray[li * 3].w, lightsArray[li * 3 + 1].w) // scale
+			, lightsArraySpot[li * 2 + 1].xyz // right
+			#endif
+			#ifdef _MicroShadowing
+			, occspec.x
+			#endif
+			#ifdef _SSRS
+			, gbufferD, invVP, eye
+			#endif
+		);
+	}
+#endif // _Clusters
+
+	fragColor.a = 1.0; // Mark as opaque
 }

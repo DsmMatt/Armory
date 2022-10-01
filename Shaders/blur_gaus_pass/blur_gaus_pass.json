@@ -2,7 +2,6 @@
 	"contexts": [
 		{
 			"name": "blur_gaus_pass_x",
-			"color_write_alpha": false,
 			"depth_write": false,
 			"compare_mode": "always",
 			"cull_mode": "none",
@@ -13,7 +12,12 @@
 				},
 				{
 					"name": "screenSize",
-					"link": "_screenSize"
+					"link": "_windowSize"
+				},
+				{
+					"name": "PPComp11",
+					"link": "_PPComp11",
+					"ifdef": ["_CPostprocess"]
 				}
 			],
 			"texture_params": [],
@@ -22,7 +26,6 @@
 		},
 		{
 			"name": "blur_gaus_pass_y",
-			"color_write_alpha": false,
 			"depth_write": false,
 			"compare_mode": "always",
 			"cull_mode": "none",
@@ -33,7 +36,12 @@
 				},
 				{
 					"name": "screenSize",
-					"link": "_screenSize"
+					"link": "_windowSize"
+				},
+				{
+					"name": "PPComp11",
+					"link": "_PPComp11",
+					"ifdef": ["_CPostprocess"]
 				}
 			],
 			"texture_params": [],
@@ -42,7 +50,6 @@
 		},
 		{
 			"name": "blur_gaus_pass_y_blend",
-			"color_write_alpha": false,
 			"depth_write": false,
 			"compare_mode": "always",
 			"cull_mode": "none",
@@ -56,7 +63,12 @@
 				},
 				{
 					"name": "screenSize",
-					"link": "_screenSize"
+					"link": "_windowSize"
+				},
+				{
+					"name": "PPComp11",
+					"link": "_PPComp11",
+					"ifdef": ["_CPostprocess"]
 				}
 			],
 			"texture_params": [],

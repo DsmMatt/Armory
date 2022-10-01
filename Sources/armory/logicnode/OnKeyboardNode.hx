@@ -2,10 +2,11 @@ package armory.logicnode;
 
 class OnKeyboardNode extends LogicNode {
 
-	public var property0:String;
-	public var property1:String;
+	public var property0: String;
+	public var property1: String;
 
-	public function new(tree:LogicTree) {
+	@:deprecated("The 'On Keyboard' node is deprecated and will be removed in future SDK versions. Please use 'Keyboard' instead.")
+	public function new(tree: LogicTree) {
 		super(tree);
 
 		tree.notifyOnUpdate(update);
@@ -22,6 +23,6 @@ class OnKeyboardNode extends LogicNode {
 		case "Released":
 			b = keyboard.released(property1);
 		}
-		if (b) run();
+		if (b) runOutput(0);
 	}
 }

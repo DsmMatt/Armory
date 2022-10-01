@@ -5,31 +5,21 @@ import armory.trait.internal.CanvasScript;
 
 class CanvasSetTextNode extends LogicNode {
 
-	var canvas:CanvasScript;
-	var element:String;
-	var text:Dynamic;
-
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
 #if arm_ui
-	function update() {
-		if (!canvas.ready) return;
-		tree.removeUpdate(update);
+	override function run(from: Int) {
+		var element = inputs[1].get();
+		var text = Std.string(inputs[2].get());
 
-		canvas.getElement(element).text = Std.string(text);
-		super.run();
-	}
-
-	override function run() {
-		element = inputs[1].get();
-		text = inputs[2].get();
-		canvas = Scene.active.getTrait(CanvasScript);
-		if (canvas == null) canvas = Scene.active.camera.getTrait(CanvasScript);
-
-		tree.notifyOnUpdate(update);
-		update();
+		var canvas = CanvasScript.getActiveCanvas();
+		canvas.notifyOnReady(() -> {
+			var e = canvas.getElement(element);
+			if (e != null) e.text = text;
+			runOutput(0);
+		});
 	}
 #end
 }

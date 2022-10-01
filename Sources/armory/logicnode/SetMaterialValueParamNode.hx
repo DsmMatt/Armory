@@ -1,36 +1,35 @@
 package armory.logicnode;
 
-import iron.math.Vec4;
+import iron.Scene;
 import iron.data.MaterialData;
 import iron.object.Object;
+import armory.trait.internal.UniformsManager;
 
 class SetMaterialValueParamNode extends LogicNode {
-
-	static var registered = false;
-	static var mat:MaterialData = null;
-	static var node = "";
-	static var value:Null<kha.FastFloat> = null;
-
-	public function new(tree:LogicTree) {
+	
+	public function new(tree: LogicTree) {
 		super(tree);
-		if (!registered) {
-			registered = true;
-			iron.object.Uniforms.externalFloatLinks.push(floatLink);
+	}
+
+	override function run(from: Int) {
+		var perObject: Null<Bool>;
+		
+		var object = inputs[1].get();
+		if(object == null) return;
+
+		perObject = inputs[2].get();
+		if(perObject == null) perObject = false;
+
+		var mat = inputs[3].get();
+		if(mat == null) return;
+
+		if(! perObject){
+			UniformsManager.removeObjectFromMap(object, Float);
+			object = Scene.active.root;
 		}
+
+		UniformsManager.setFloatValue(mat, object, inputs[4].get(), inputs[5].get());
+		runOutput(0);
 	}
 
-	override function run() {
-		mat = inputs[1].get();
-		node = inputs[2].get();
-		value = inputs[3].get();
-
-		super.run();
-	}
-
-	static function floatLink(object:Object, mat:MaterialData, link:String):Null<kha.FastFloat> {
-		if (link == node) {
-			return value;
-		}
-		return null;
-	}
 }

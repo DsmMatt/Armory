@@ -2,25 +2,25 @@ package armory.logicnode;
 
 class ArrayRemoveValueNode extends LogicNode {
 
- 	var removedValue:Dynamic = null;
+ 	var removedValue: Dynamic = null;
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-		var ar:Array<Dynamic> = inputs[1].get();
+	override function run(from: Int) {
+		var ar: Array<Dynamic> = inputs[1].get();
 		if (ar == null) return;
 
-		var val:Dynamic = inputs[2].get();
+		var val: Dynamic = inputs[2].get();
 
 		removedValue = val;
 		ar.remove(val);
 
-		runOutputs(0);
+		runOutput(0);
 	}
 
-	override function get(from:Int):Dynamic {
+	override function get(from: Int): Dynamic {
 		return removedValue;
 	}
 }

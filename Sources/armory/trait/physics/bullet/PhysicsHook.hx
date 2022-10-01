@@ -13,36 +13,36 @@ import iron.data.MeshData;
 import iron.data.SceneFormat;
 import armory.trait.physics.RigidBody;
 import armory.trait.physics.PhysicsWorld;
-import haxebullet.Bullet;
 
 class PhysicsHook extends Trait {
-	var target:Object;
-	var targetName:String;
-	var targetTransform:Transform;
-	var verts:Array<Float>;
 
-	var constraint:BtGeneric6DofConstraintPointer = null;
+	var target: Object;
+	var targetName: String;
+	var targetTransform: Transform;
+	var verts: Array<Float>;
+
+	var constraint: bullet.Bt.Generic6DofConstraint = null;
 
 	#if arm_physics_soft
-	var hookRB:BtRigidBodyPointer = null;
+	var hookRB: bullet.Bt.RigidBody = null;
 	#end
 
 	static var nullvec = true;
-	static var vec1:BtVector3;
-	static var quat1:BtQuaternion;
-	static var trans1:BtTransform;
-	static var trans2:BtTransform;
+	static var vec1: bullet.Bt.Vector3;
+	static var quat1: bullet.Bt.Quaternion;
+	static var trans1: bullet.Bt.Transform;
+	static var trans2: bullet.Bt.Transform;
 	static var quat = new Quat();
 
-	public function new(targetName:String, verts:Array<Float>) {
+	public function new(targetName: String, verts: Array<Float>) {
 		super();
 
 		if (nullvec) {
 			nullvec = false;
-			vec1 = BtVector3.create(0, 0, 0);
-			quat1 = BtQuaternion.create(0, 0, 0, 0);
-			trans1 = BtTransform.create();
-			trans2 = BtTransform.create();
+			vec1 = new bullet.Bt.Vector3(0, 0, 0);
+			quat1 = new bullet.Bt.Quaternion(0, 0, 0, 0);
+			trans1 = new bullet.Bt.Transform();
+			trans2 = new bullet.Bt.Transform();
 		}
 
 		this.targetName = targetName;
@@ -63,7 +63,7 @@ class PhysicsHook extends Trait {
 
 		// Soft body hook
 	#if arm_physics_soft
-		var sb:SoftBody = object.getTrait(SoftBody);
+		var sb: SoftBody = object.getTrait(SoftBody);
 		if (sb != null && sb.ready) {
 
 			// Place static rigid body at target location
@@ -80,15 +80,15 @@ class PhysicsHook extends Trait {
 			var centerOfMassOffset = trans2;
 			centerOfMassOffset.setIdentity();
 			var mass = 0.0;
-			var motionState = BtDefaultMotionState.create(trans1, centerOfMassOffset);
+			var motionState = new bullet.Bt.DefaultMotionState(trans1, centerOfMassOffset);
 			var inertia = vec1;
 			inertia.setX(0);
 			inertia.setY(0);
 			inertia.setZ(0);
-			var shape = BtSphereShape.create(0.01);
+			var shape = new bullet.Bt.SphereShape(0.01);
 			shape.calculateLocalInertia(mass, inertia);
-			var bodyCI = BtRigidBodyConstructionInfo.create(mass, motionState, shape, inertia);
-			hookRB = BtRigidBody.create(bodyCI);
+			var bodyCI = new bullet.Bt.RigidBodyConstructionInfo(mass, motionState, shape, inertia);
+			hookRB = new bullet.Bt.RigidBody(bodyCI);
 
 			#if js
 			var nodes = sb.body.get_m_nodes();
@@ -97,7 +97,7 @@ class PhysicsHook extends Trait {
 			#end
 
 			var geom = cast(object, MeshObject).data.geom;
-			var numNodes = Std.int(geom.positions.length / 3);
+			var numNodes = Std.int(geom.positions.values.length / 4);
 			for (i in 0...numNodes) {
 				var node = nodes.at(i);
 				#if js
@@ -124,14 +124,14 @@ class PhysicsHook extends Trait {
 	#end
 
 		// Rigid body hook
-		var rb1:RigidBody = object.getTrait(RigidBody);
+		var rb1: RigidBody = object.getTrait(RigidBody);
 		if (rb1 != null && rb1.ready) {
 			trans1.setIdentity();
 			vec1.setX(targetTransform.worldx() - object.transform.worldx());
 			vec1.setY(targetTransform.worldy() - object.transform.worldy());
 			vec1.setZ(targetTransform.worldz() - object.transform.worldz());
 			trans1.setOrigin(vec1);
-			constraint = BtGeneric6DofConstraint.create(rb1.body, trans1, false);
+			constraint = new bullet.Bt.Generic6DofConstraint(rb1.body, trans1, false);
 			vec1.setX(0);
 			vec1.setY(0);
 			vec1.setZ(0);

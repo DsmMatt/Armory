@@ -6,12 +6,12 @@ import iron.math.Vec4;
 import iron.math.Mat4;
 import iron.Trait;
 import iron.object.MeshObject;
+import iron.data.Geometry;
 import iron.data.MeshData;
 import iron.data.SceneFormat;
 #if arm_physics_soft
 import armory.trait.physics.RigidBody;
 import armory.trait.physics.PhysicsWorld;
-import haxebullet.Bullet;
 #end
 
 class SoftBody extends Trait {
@@ -19,23 +19,23 @@ class SoftBody extends Trait {
 	public function new() { super(); }
 #else
 
-	static var physics:PhysicsWorld = null;
+	static var physics: PhysicsWorld = null;
 
 	public var ready = false;
-	var shape:SoftShape;
-	var bend:Float;
-	var mass:Float;
-	var margin:Float;
+	var shape: SoftShape;
+	var bend: Float;
+	var mass: Float;
+	var margin: Float;
 
 	public var vertOffsetX = 0.0;
 	public var vertOffsetY = 0.0;
 	public var vertOffsetZ = 0.0;
 
-	public var body:BtSoftBodyPointer;
+	public var body: bullet.Bt.SoftBody;
 
-	static var helpers:BtSoftBodyHelpers;
+	static var helpers: bullet.Bt.SoftBodyHelpers;
 	static var helpersCreated = false;
-	static var worldInfo:BtSoftBodyWorldInfo;
+	static var worldInfo: bullet.Bt.SoftBodyWorldInfo;
 
 	public function new(shape = SoftShape.Cloth, bend = 0.5, mass = 1.0, margin = 0.04) {
 		super();
@@ -49,13 +49,17 @@ class SoftBody extends Trait {
 		});
 	}
 
-	function fromF32(ar:kha.arrays.Float32Array):kha.arrays.Float32Array {
-		var vals = new kha.arrays.Float32Array(ar.length);
-		for (i in 0...vals.length) vals[i] = ar[i];
+	function fromI16(ar: kha.arrays.Int16Array, scalePos: Float): kha.arrays.Float32Array {
+		var vals = new kha.arrays.Float32Array(Std.int(ar.length / 4) * 3);
+		for (i in 0...Std.int(vals.length / 3)) {
+			vals[i * 3    ] = (ar[i * 4    ] / 32767) * scalePos;
+			vals[i * 3 + 1] = (ar[i * 4 + 1] / 32767) * scalePos;
+			vals[i * 3 + 2] = (ar[i * 4 + 2] / 32767) * scalePos;
+		}
 		return vals;
 	}
 
-	function fromU32(ars:Array<kha.arrays.Uint32Array>):kha.arrays.Uint32Array {
+	function fromU32(ars: Array<kha.arrays.Uint32Array>): kha.arrays.Uint32Array {
 		var len = 0;
 		for (ar in ars) len += ar.length;
 		var vals = new kha.arrays.Uint32Array(len);
@@ -89,7 +93,7 @@ class SoftBody extends Trait {
 			object.transform.buildMatrix();
 		}
 
-		var positions = fromF32(geom.positions);
+		var positions = fromI16(geom.positions.values, mo.data.scalePos);
 		for (i in 0...Std.int(positions.length / 3)) {
 			v.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
 			v.applyQuat(object.transform.rot);
@@ -97,7 +101,7 @@ class SoftBody extends Trait {
 			v.y *= object.transform.scale.y;
 			v.z *= object.transform.scale.z;
 			v.addf(object.transform.worldx(), object.transform.worldy(), object.transform.worldz());
-			positions[i * 3] = v.x;
+			positions[i * 3    ] = v.x;
 			positions[i * 3 + 1] = v.y;
 			positions[i * 3 + 2] = v.z;
 		}
@@ -115,10 +119,11 @@ class SoftBody extends Trait {
 		for (ar in geom.indices) numtri += Std.int(ar.length / 3);
 
 		if (!helpersCreated) {
-			helpers = BtSoftBodyHelpers.create();
+			helpers = new bullet.Bt.SoftBodyHelpers();
 			worldInfo = physics.world.getWorldInfo();
 			helpersCreated = true;
 		}
+
 		#if js
 		body = helpers.CreateFromTriMesh(worldInfo, cast positions, cast vecind, numtri);
 		#elseif cpp
@@ -126,7 +131,7 @@ class SoftBody extends Trait {
 		#end
 
 		// body.generateClusters(4);
-		
+
 		#if js
 		var cfg = body.get_m_cfg();
 		cfg.set_viterations(physics.solverIterations);
@@ -138,7 +143,7 @@ class SoftBody extends Trait {
 			cfg.set_kDP(0.01);
 			cfg.set_kPR(bend);
 		}
-		
+
 		#elseif cpp
 		body.m_cfg.viterations = physics.solverIterations;
 		body.m_cfg.piterations = physics.solverIterations;
@@ -154,7 +159,7 @@ class SoftBody extends Trait {
 		body.getCollisionShape().setMargin(margin);
 
 		physics.world.addSoftBody(body, 1, -1);
-		body.setActivationState(BtCollisionObject.DISABLE_DEACTIVATION);
+		body.setActivationState(bullet.Bt.CollisionObject.DISABLE_DEACTIVATION);
 
 		notifyOnUpdate(update);
 	}
@@ -165,14 +170,16 @@ class SoftBody extends Trait {
 	var cb = new Vec4();
 	var ab = new Vec4();
 	function update() {
-		var geom = cast(object, MeshObject).data.geom;
-		
+		var mo = cast(object, MeshObject);
+		var geom = mo.data.geom;
+
 		#if arm_deinterleaved
 		var v = geom.vertexBuffers[0].lock();
 		var n = geom.vertexBuffers[1].lock();
-		var l = 3;//geom.structLength;
 		#else
 		var v = geom.vertexBuffer.lock();
+		var vbPos = geom.vertexBufferMap.get("pos");
+		var v2 = vbPos != null ? vbPos.lock() : null; // For shadows
 		var l = geom.structLength;
 		#end
 		var numVerts = Std.int(v.length / l);
@@ -182,6 +189,22 @@ class SoftBody extends Trait {
 		#elseif cpp
 		var nodes = body.m_nodes;
 		#end
+
+		var scalePos = 1.0;
+		for (i in 0...numVerts) {
+			var node = nodes.at(i);
+			#if js
+			var nodePos = node.get_m_x();
+			#elseif cpp
+			var nodePos = node.m_x;
+			#end
+			if (Math.abs(nodePos.x()) > scalePos) scalePos = Math.abs(nodePos.x());
+			if (Math.abs(nodePos.y()) > scalePos) scalePos = Math.abs(nodePos.y());
+			if (Math.abs(nodePos.z()) > scalePos) scalePos = Math.abs(nodePos.z());
+		}
+		mo.data.scalePos = scalePos;
+		mo.transform.scaleWorld = scalePos;
+		mo.transform.buildMatrix();
 
 		for (i in 0...numVerts) {
 			var node = nodes.at(i);
@@ -193,19 +216,24 @@ class SoftBody extends Trait {
 			var nodeNor = node.m_n;
 			#end
 			#if arm_deinterleaved
-			v.set(i * l, nodePos.x());
-			v.set(i * l + 1, nodePos.y());
-			v.set(i * l + 2, nodePos.z());
-			n.set(i * l, nodeNor.x());
-			n.set(i * l + 1, nodeNor.y());
-			n.set(i * l + 2, nodeNor.z());
+			v.set(i * 4    , Std.int(nodePos.x() * 32767 * (1 / scalePos)));
+			v.set(i * 4 + 1, Std.int(nodePos.y() * 32767 * (1 / scalePos)));
+			v.set(i * 4 + 2, Std.int(nodePos.z() * 32767 * (1 / scalePos)));
+			n.set(i * 2    , Std.int(nodeNor.x() * 32767));
+			n.set(i * 2 + 1, Std.int(nodeNor.y() * 32767));
+			v.set(i * 4 + 3, Std.int(nodeNor.z() * 32767));
 			#else
-			v.set(i * l, nodePos.x());
-			v.set(i * l + 1, nodePos.y());
-			v.set(i * l + 2, nodePos.z());
-			v.set(i * l + 3, nodeNor.x());
-			v.set(i * l + 4, nodeNor.y());
-			v.set(i * l + 5, nodeNor.z());
+			v.set(i * l    , Std.int(nodePos.x() * 32767 * (1 / scalePos)));
+			v.set(i * l + 1, Std.int(nodePos.y() * 32767 * (1 / scalePos)));
+			v.set(i * l + 2, Std.int(nodePos.z() * 32767 * (1 / scalePos)));
+			if (vbPos != null) {
+				v2.set(i * 4    , v.get(i * l    ));
+				v2.set(i * 4 + 1, v.get(i * l + 1));
+				v2.set(i * 4 + 2, v.get(i * l + 2));
+			}
+			v.set(i * l + 3, Std.int(nodeNor.z() * 32767));
+			v.set(i * l + 4, Std.int(nodeNor.x() * 32767));
+			v.set(i * l + 5, Std.int(nodeNor.y() * 32767));
 			#end
 		}
 		// for (i in 0...Std.int(geom.indices[0].length / 3)) {
@@ -234,6 +262,7 @@ class SoftBody extends Trait {
 		geom.vertexBuffers[1].unlock();
 		#else
 		geom.vertexBuffer.unlock();
+		if (vbPos != null) vbPos.unlock();
 		#end
 	}
 

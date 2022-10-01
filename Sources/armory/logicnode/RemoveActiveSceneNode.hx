@@ -2,13 +2,12 @@ package armory.logicnode;
 
 class RemoveActiveSceneNode extends LogicNode {
 
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-
+	override function run(from: Int) {
 		iron.Scene.active.remove();
-		runOutputs(0);
+		runOutput(0);
 	}
 }

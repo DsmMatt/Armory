@@ -3,16 +3,9 @@
 		{
 			"name": "ssao_pass",
 			"depth_write": false,
-			"color_write_alpha": false,
-			"color_write_green": false,
-			"color_write_blue": false,
 			"compare_mode": "always",
 			"cull_mode": "none",
 			"links": [
-				{
-					"name": "snoise",
-					"link": "_noise8"
-				},
 				{
 					"name": "invVP",
 					"link": "_inverseViewProjectionMatrix"
@@ -23,20 +16,29 @@
 				},
 				{
 					"name": "eyeLook",
-					"link": "_cameraLook",
-					"ifdef": ["_Disabled"]
+					"link": "_cameraLook"
+				},
+				{
+					"name": "cameraProj",
+					"link": "_cameraPlaneProj"
 				},
 				{
 					"name": "screenSize",
 					"link": "_screenSize"
 				},
 				{
-					"name": "aspectRatio",
-					"link": "_aspectRatio"
+					"name": "PPComp11",
+					"link": "_PPComp11",
+					"ifdef": ["_CPostprocess"]
+				},
+				{
+					"name": "PPComp12",
+					"link": "_PPComp12",
+					"ifdef": ["_CPostprocess"]
 				}
 			],
 			"texture_params": [],
-			"vertex_shader": "../include/pass.vert.glsl",
+			"vertex_shader": "../include/pass_viewray.vert.glsl",
 			"fragment_shader": "ssao_pass.frag.glsl"
 		}
 	]

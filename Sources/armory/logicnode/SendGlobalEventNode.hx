@@ -1,25 +1,21 @@
 package armory.logicnode;
 
-import iron.object.Object;
 import armory.system.Event;
 
 class SendGlobalEventNode extends LogicNode {
 
-	var entries:Array<TEvent> = null;
-
-	public function new(tree:LogicTree) {
+	public function new(tree: LogicTree) {
 		super(tree);
 	}
 
-	override function run() {
-		var name:String = inputs[1].get();
-		
-		// if (entries == null) {
-			entries = Event.get(name);
-		// }
-		if (entries == null) return; // Event does not exist
-		for (e in entries) e.onEvent();
+	override function run(from: Int) {
+		final name: String = inputs[1].get();
+		final entries = Event.get(name);
 
-		super.run();
+		if (entries != null) {
+			for (e in entries) e.onEvent();
+		}
+
+		runOutput(0);
 	}
 }

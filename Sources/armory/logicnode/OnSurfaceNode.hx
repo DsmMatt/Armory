@@ -2,9 +2,10 @@ package armory.logicnode;
 
 class OnSurfaceNode extends LogicNode {
 
-	public var property0:String;
+	public var property0: String;
 
-	public function new(tree:LogicTree) {
+	@:deprecated("The 'On Surface' node is deprecated and will be removed in future SDK versions. Please use 'Surface' instead.")
+	public function new(tree: LogicTree) {
 		super(tree);
 
 		tree.notifyOnUpdate(update);
@@ -23,6 +24,6 @@ class OnSurfaceNode extends LogicNode {
 		case "Moved":
 			b = surface.moved;
 		}
-		if (b) run();
+		if (b) runOutput(0);
 	}
 }

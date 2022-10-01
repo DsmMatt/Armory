@@ -4,6 +4,7 @@
 #include "std/gbuffer.glsl"
 
 uniform sampler2D probeTex;
+uniform sampler2D gbufferD;
 uniform sampler2D gbuffer0;
 uniform sampler2D gbuffer1;
 uniform mat4 probeVP;
@@ -20,24 +21,27 @@ void main() {
 	texCoord.y = 1.0 - texCoord.y;
 	#endif
 
-	vec4 g0 = texture(gbuffer0, texCoord); // Normal.xy, metallic/roughness, depth
+	vec4 g0 = textureLod(gbuffer0, texCoord, 0.0); // Normal.xy, roughness, metallic/matid
 
-	float roughness = unpackFloat(g0.b).y;
+	float roughness = g0.b;
 	if (roughness > 0.95) {
 		fragColor.rgb = vec3(0.0);
 		return;
 	}
 
-	float spec = fract(texture(gbuffer1, texCoord).a);
+	float spec = fract(textureLod(gbuffer1, texCoord, 0.0).a);
 	if (spec == 0.0) {
 		fragColor.rgb = vec3(0.0);
 		return;
 	}
 
-	float depth = (1.0 - g0.a) * 2.0 - 1.0;
+	float depth = textureLod(gbufferD, texCoord, 0.0).r * 2.0 - 1.0;
 	vec3 wp = getPos2(invVP, depth, texCoord);
 	vec4 pp = probeVP * vec4(wp.xyz, 1.0);
 	vec2 tc = (pp.xy / pp.w) * 0.5 + 0.5;
+	#ifdef _InvY
+	tc.y = 1.0 - tc.y;
+	#endif
 
 	vec2 enc = g0.rg;
 	vec3 n;

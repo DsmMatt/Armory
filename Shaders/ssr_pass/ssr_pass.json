@@ -3,7 +3,6 @@
 		{
 			"name": "ssr_pass",
 			"depth_write": false,
-			"color_write_alpha": false,
 			"compare_mode": "always",
 			"cull_mode": "none",
 			"links": [
@@ -12,8 +11,8 @@
 					"link": "_projectionMatrix"
 				},
 				{
-					"name": "tiV",
-					"link": "_transposeInverseViewMatrix"
+					"name": "V3",
+					"link": "_viewMatrix3"
 				},
 				{
 					"name": "invP",
@@ -22,6 +21,16 @@
 				{
 					"name": "cameraProj",
 					"link": "_cameraPlaneProj"
+				},
+				{
+					"name": "PPComp9",
+					"link": "_PPComp9",
+					"ifdef": ["_CPostprocess"]
+				},
+				{
+					"name": "PPComp10",
+					"link": "_PPComp10",
+					"ifdef": ["_CPostprocess"]
 				}
 			],
 			"texture_params": [],

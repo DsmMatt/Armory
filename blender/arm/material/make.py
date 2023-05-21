@@ -8,6 +8,7 @@ import arm.log as log
 import arm.material.cycles as cycles
 import arm.material.make_shader as make_shader
 import arm.material.mat_batch as mat_batch
+import arm.material.mat_utils as mat_utils
 import arm.node_utils
 import arm.utils
 
@@ -16,6 +17,7 @@ if arm.is_reload(__name__):
     cycles = arm.reload_module(cycles)
     make_shader = arm.reload_module(make_shader)
     mat_batch = arm.reload_module(mat_batch)
+    mat_utils = arm.reload_module(mat_utils)
     arm.node_utils = arm.reload_module(arm.node_utils)
     arm.utils = arm.reload_module(arm.utils)
 else:
@@ -35,6 +37,9 @@ def glsl_value(val):
 def parse(material: Material, mat_data, mat_users: Dict[Material, List[Object]], mat_armusers) -> tuple:
     wrd = bpy.data.worlds['Arm']
     rpdat = arm.utils.get_rp()
+
+    # Texture caching for material batching
+    batch_cached_textures = []
 
     needs_sss = material_needs_sss(material)
     if needs_sss and rpdat.rp_sss_state != 'Off' and '_SSS' not in wrd.world_defs:
@@ -121,6 +126,7 @@ def parse(material: Material, mat_data, mat_users: Dict[Material, List[Object]],
                             if tex is None:
                                 tex = {'name': tex_name, 'file': ''}
                             c['bind_textures'].append(tex)
+                    batch_cached_textures = c['bind_textures']
 
                 # Set marked inputs as uniforms
                 for node in material.node_tree.nodes:
@@ -131,6 +137,11 @@ def parse(material: Material, mat_data, mat_users: Dict[Material, List[Object]],
 
         elif rp == 'translucent':
             c['bind_constants'].append({'name': 'receiveShadow', 'bool': material.arm_receive_shadow})
+        
+        elif rp == 'shadowmap':
+            if wrd.arm_batch_materials:
+                if len(c['bind_textures']) > 0:
+                    c['bind_textures'] = batch_cached_textures
 
     if wrd.arm_single_data_file:
         mat_data['shader'] = shader_data_name
@@ -152,7 +163,7 @@ def material_needs_sss(material: Material) -> bool:
         if sss_node is not None and sss_node.outputs[0].is_linked and (sss_node.inputs[1].is_linked or sss_node.inputs[1].default_value != 0.0):
             return True
 
-    for sss_node in arm.node_utils.iter_nodes_armorypbr(material.node_tree):
+    for sss_node in mat_utils.iter_nodes_armorypbr(material.node_tree):
         if sss_node is not None and sss_node.outputs[0].is_linked and (sss_node.inputs[8].is_linked or sss_node.inputs[8].default_value != 0.0):
             return True
 

@@ -24,6 +24,8 @@ if arm.is_reload(__name__):
     from arm.logicnode.replacement import NodeReplacement
     arm.node_utils = arm.reload_module(arm.node_utils)
     arm.utils = arm.reload_module(arm.utils)
+    arm.logicnode.arm_sockets = arm.reload_module(arm.logicnode.arm_sockets)
+    from arm.logicnode.arm_sockets import ArmCustomSocket
 else:
     arm.enable_reload(__name__)
 
@@ -75,7 +77,7 @@ class ArmLogicTreeNode(bpy.types.Node):
 
     @classmethod
     def poll(cls, ntree):
-        return ntree.bl_idname == 'ArmLogicTreeType'
+        return ntree.bl_idname == 'ArmLogicTreeType' or 'ArmGroupTree'
 
     @classmethod
     def on_register(cls):
@@ -86,6 +88,17 @@ class ArmLogicTreeNode(bpy.types.Node):
     @classmethod
     def on_unregister(cls):
         pass
+
+    @classmethod
+    def absolute_location(cls, node):
+        """Gets the absolute location of the node including frames and parent nodes."""
+        locx, locy = node.location[:]
+        if node.parent:
+            locx += node.parent.location.x
+            locy += node.parent.location.y
+            return cls.absolute_location(node.parent)
+        else:
+            return locx, locy
 
     def get_tree(self) -> bpy.types.NodeTree:
         return self.id_data
@@ -244,6 +257,86 @@ class ArmLogicTreeNode(bpy.types.Node):
 
         return socket
 
+    def get_socket_index(self, socket:bpy.types.NodeSocket) -> int:
+        """Gets the scket index of a socket in this node."""
+
+        index = 0
+        if socket.is_output:
+            for output in self.outputs:
+                if output == socket:
+                    return index
+                index = index + 1
+        else:
+            for input in self.inputs:
+                if input == socket:
+                    return index
+                index = index + 1
+        return -1
+
+    def insert_input(self, socket_type: str, socket_index: int, socket_name: str, default_value: Any = None, is_var: bool = False) -> bpy.types.NodeSocket:
+        """Insert a new input socket to the node at a particular index.
+
+        If `is_var` is true, a dot is placed inside the socket to denote
+        that this socket can be used for variable access (see
+        SetVariable node).
+        """
+
+        socket = self.add_input(socket_type, socket_name, default_value, is_var)
+        self.inputs.move(len(self.inputs) - 1, socket_index)
+        return socket
+
+    def insert_output(self, socket_type: str, socket_index: int, socket_name: str, default_value: Any = None, is_var: bool = False) -> bpy.types.NodeSocket:
+        """Insert a new output socket to the node at a particular index.
+
+        If `is_var` is true, a dot is placed inside the socket to denote
+        that this socket can be used for variable access (see
+        SetVariable node).
+        """
+
+        socket = self.add_output(socket_type, socket_name, default_value, is_var)
+        self.outputs.move(len(self.outputs) - 1, socket_index)
+        return socket
+
+    def change_input_socket(self, socket_type: str, socket_index: int, socket_name: str, default_value: Any = None, is_var: bool = False) -> bpy.types.NodeSocket:
+        """Change an input socket type retaining the previous socket links
+
+        If `is_var` is true, a dot is placed inside the socket to denote
+        that this socket can be used for variable access (see
+        SetVariable node).
+        """
+
+        old_socket = self.inputs[socket_index]
+        links = old_socket.links
+        from_sockets = []
+        for link in links:
+            from_sockets.append(link.from_socket)
+        current_socket = self.insert_input(socket_type, socket_index, socket_name, default_value, is_var)
+        if default_value is None:
+            old_socket.copy_defaults(current_socket)
+        self.inputs.remove(old_socket)
+        tree = self.get_tree()
+        for from_socket in from_sockets:
+            tree.links.new(from_socket, current_socket)
+        return current_socket
+
+    def change_output_socket(self, socket_type: str, socket_index: int, socket_name: str, default_value: Any = None, is_var: bool = False) -> bpy.types.NodeSocket:
+        """Change an output socket type retaining the previous socket links
+
+        If `is_var` is true, a dot is placed inside the socket to denote
+        that this socket can be used for variable access (see
+        SetVariable node).
+        """
+
+        links = self.outputs[socket_index].links
+        to_sockets = []
+        for link in links:
+            to_sockets.append(link.to_socket)
+        self.outputs.remove(self.outputs[socket_index])
+        current_socket = self.insert_output(socket_type, socket_index, socket_name, default_value, is_var)
+        tree = self.get_tree()
+        for to_socket in to_sockets:
+            tree.links.new(current_socket, to_socket)
+        return current_socket
 
 class ArmLogicVariableNodeMixin(ArmLogicTreeNode):
     """A mixin class for variable nodes. This class adds functionality
@@ -334,18 +427,37 @@ class ArmLogicVariableNodeMixin(ArmLogicTreeNode):
 
             self.is_master_node = False  # Ignore this node in get_master_node below
             if self.__class__.get_master_node(target_tree, self.arm_logic_id) is None:
-                var_item = lst.add()
-                var_item['_name'] = arm.utils.unique_str_for_list(
-                    items=lst, name_attr='name', wanted_name=self.arm_logic_id, ignore_item=var_item
-                )
-                var_item.node_type = self.bl_idname
-                var_item.color = arm.utils.get_random_color_rgb()
 
-                target_tree.arm_treevariableslist_index = len(lst) - 1
-                arm.make_state.redraw_ui = True
+                # copy() is not only called when manually copying/pasting
+                # nodes, but also when duplicating logic trees.
+                # In that case, Blender duplicates the arm_treevariableslist
+                # property, so all tree variables already exist before
+                # adding a single node to the new tree. In turn, each
+                # tree variable exists without a master node before
+                # the first node referencing that variable is copied over
+                # to the new tree.
+                # For this reason, despite having no master node, we need
+                # to check whether the tree variable already exists.
+                target_tree_has_variable = False
+                for item in lst:
+                    if item.name == self.arm_logic_id:
+                        target_tree_has_variable = True
+                        break
+
+                if not target_tree_has_variable:
+                    var_item = lst.add()
+                    var_item['_name'] = arm.utils.unique_name_in_lists(
+                        item_lists=[lst], name_attr='name', wanted_name=self.arm_logic_id, ignore_item=var_item
+                    )
+                    var_item.node_type = self.bl_idname
+                    var_item.color = arm.utils.get_random_color_rgb()
+
+                    target_tree.arm_treevariableslist_index = len(lst) - 1
+                    arm.make_state.redraw_ui = True
 
                 self.is_master_node = True
             else:
+                # Use existing variable
                 for item in lst:
                     if item.name == self.arm_logic_id:
                         self.color = item.color
@@ -595,7 +707,8 @@ class ArmNodeAddInputOutputButton(bpy.types.Operator):
     out_socket_type: StringProperty(name='Out Socket Type', default='ArmDynamicSocket')
     in_name_format: StringProperty(name='In Name Format', default='Input {0}')
     out_name_format: StringProperty(name='Out Name Format', default='Output {0}')
-    in_index_name_offset: IntProperty(name='Index Name Offset', default=0)
+    in_index_name_offset: IntProperty(name='In Name Offset', default=0)
+    out_index_name_offset: IntProperty(name='Out Name Offset', default=0)
 
     def execute(self, context):
         global array_nodes
@@ -612,7 +725,7 @@ class ArmNodeAddInputOutputButton(bpy.types.Operator):
         assert len(out_socket_types) == len(out_name_formats)
 
         in_format_index = (len(outs) + self.in_index_name_offset) // len(in_socket_types)
-        out_format_index = len(outs) // len(out_socket_types)
+        out_format_index = (len(outs) + self.out_index_name_offset) // len(out_socket_types)
         for socket_type, name_format in zip(in_socket_types, in_name_formats):
             inps.new(socket_type, name_format.format(str(in_format_index)))
         for socket_type, name_format in zip(out_socket_types, out_name_formats):
@@ -625,6 +738,7 @@ class ArmNodeAddInputOutputButton(bpy.types.Operator):
         self.in_name_format = 'Input {0}'
         self.out_name_format = 'Output {0}'
         self.in_index_name_offset = 0
+        self.out_index_name_offset = 0
 
         return{'FINISHED'}
 
@@ -885,6 +999,12 @@ def deprecated(*alternatives: str, message=""):
 def is_logic_node_context(context: bpy.context) -> bool:
     """Return whether the given bpy context is inside a logic node editor."""
     return context.space_data.type == 'NODE_EDITOR' and context.space_data.tree_type == 'ArmLogicTreeType'
+
+def is_logic_node_edit_context(context: bpy.context) -> bool:
+    """Return whether the given bpy context is inside a logic node editor and tree is being edited."""
+    if context.space_data.type == 'NODE_EDITOR' and context.space_data.tree_type == 'ArmLogicTreeType':
+        return context.space_data.edit_tree
+    return False
 
 
 def reset_globals():

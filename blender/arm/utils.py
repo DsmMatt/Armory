@@ -1,5 +1,6 @@
 from enum import Enum, unique
 import glob
+import itertools
 import json
 import locale
 import os
@@ -9,7 +10,7 @@ import re
 import shlex
 import shutil
 import subprocess
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 import webbrowser
 
 import numpy as np
@@ -86,7 +87,10 @@ def convert_image(image, path, file_format='JPEG'):
     ren.image_settings.file_format = file_format
     if file_format == 'PNG':
         ren.image_settings.color_mode = 'RGBA'
+    orig_image_colorspace = image.colorspace_settings.name
+    image.colorspace_settings.name = 'Non-Color'
     image.save_render(path, scene=bpy.context.scene)
+    image.colorspace_settings.name = orig_image_colorspace
     ren.image_settings.quality = orig_quality
     ren.image_settings.file_format = orig_file_format
     ren.image_settings.color_mode = orig_color_mode
@@ -188,6 +192,26 @@ def get_gapi():
     if wrd.arm_runtime == 'Browser':
         return 'webgl'
     return 'direct3d11' if get_os() == 'win' else 'opengl'
+
+
+def is_gapi_gl_es() -> bool:
+    """Return whether the currently targeted graphics API is using OpenGL ES."""
+    wrd = bpy.data.worlds['Arm']
+
+    if state.is_export:
+        item_exporter = wrd.arm_exporterlist[wrd.arm_exporterlist_index]
+
+        # See Khamake's ShaderCompiler.findType() and krafix::Target.es in krafix.cpp ("target.es")
+        if state.target == 'android-hl':
+            return item_exporter.arm_gapi_android == 'opengl'
+        if state.target == 'ios-hl':
+            return item_exporter.arm_gapi_ios == 'opengl'
+        elif state.target == 'html5':
+            return True
+        return False
+
+    else:
+        return wrd.arm_runtime == 'Browser'
 
 
 def get_rp() -> arm.props_renderpath.ArmRPListItem:
@@ -617,19 +641,24 @@ def update_trait_collections():
                 col = bpy.data.collections['Trait|' + t.name]
             col.objects.link(o)
 
+
 def to_hex(val):
     return '#%02x%02x%02x%02x' % (int(val[3] * 255), int(val[0] * 255), int(val[1] * 255), int(val[2] * 255))
 
-def color_to_int(val):
+
+def color_to_int(val) -> int:
+    # Clamp values, otherwise the return value might not fit in 32 bit
+    # (and later cause problems, e.g. in the .arm file reader)
+    val = [max(0.0, min(v, 1.0)) for v in val]
     return (int(val[3] * 255) << 24) + (int(val[0] * 255) << 16) + (int(val[1] * 255) << 8) + int(val[2] * 255)
 
 
-def unique_str_for_list(items: list, name_attr: str, wanted_name: str, ignore_item: Optional[Any] = None) -> str:
-    """Creates a unique name that no item in the given list already has.
+def unique_name_in_lists(item_lists: Iterable[list], name_attr: str, wanted_name: str, ignore_item: Optional[Any] = None) -> str:
+    """Creates a unique name that no item in the given lists already has.
     The format follows Blender's behaviour when handling duplicate
     object names.
 
-    @param items The list of items (any type).
+    @param item_lists An iterable of item lists (any type).
     @param name_attr The attribute of the items that holds the name.
     @param wanted_name The name that should be preferably returned, if
         no name collision occurs.
@@ -637,7 +666,7 @@ def unique_str_for_list(items: list, name_attr: str, wanted_name: str, ignore_it
         comparing names.
     """
     def _has_collision(name: str) -> bool:
-        for item in items:
+        for item in itertools.chain(*item_lists):
             if item == ignore_item:
                 continue
             if getattr(item, name_attr) == name:
@@ -974,7 +1003,8 @@ def get_kha_target(target_name): # TODO: remove
         return ''
     return target_name
 
-def target_to_gapi(arm_project_target):
+
+def target_to_gapi(arm_project_target: str) -> str:
     # TODO: align target names
     if arm_project_target == 'krom':
         return 'arm_gapi_' + arm.utils.get_os()
@@ -998,6 +1028,7 @@ def target_to_gapi(arm_project_target):
         return 'arm_gapi_html5'
     else: # html5, custom
         return 'arm_gapi_' + arm_project_target
+
 
 def check_default_props():
     wrd = bpy.data.worlds['Arm']

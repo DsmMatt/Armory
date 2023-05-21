@@ -27,6 +27,7 @@ class DebugConsole extends Trait {
 
 	public static var visible = true;
 	public static var traceWithPosition = true;
+	public static var fpsAvg = 0.0;
 
 	static var ui: Zui;
 	var scaleFactor = 1.0;
@@ -63,10 +64,10 @@ class DebugConsole extends Trait {
 	public static var debugFloat = 1.0;
 	public static var watchNodes: Array<armory.logicnode.LogicNode> = [];
 
-	public static var position_console: PositionStateEnum = PositionStateEnum.RIGHT;
-	var shortcut_visible = kha.input.KeyCode.Tilde;
-	var shortcut_scale_in = kha.input.KeyCode.OpenBracket;
-	var shortcut_scale_out = kha.input.KeyCode.CloseBracket;
+	static var positionConsole: PositionStateEnum = PositionStateEnum.Right;
+	var shortcutVisible = kha.input.KeyCode.Tilde;
+	var shortcutScaleIn = kha.input.KeyCode.OpenBracket;
+	var shortcutScaleOut = kha.input.KeyCode.CloseBracket;
 
 	#if arm_shadowmap_atlas
 	var lightColorMap: Map<String, Int> = new Map();
@@ -89,14 +90,10 @@ class DebugConsole extends Trait {
 			// Set settings
 			setScale(scaleDebugConsole);
 			setVisible(visibleDebugConsole == 1);
-			switch (positionDebugConsole) {
-				case 0: setPosition(PositionStateEnum.LEFT);
-				case 1: setPosition(PositionStateEnum.CENTER);
-				case 2: setPosition(PositionStateEnum.RIGHT);
-			}
-			shortcut_visible = keyCodeVisible;
-			shortcut_scale_in = keyCodeScaleIn;
-			shortcut_scale_out = keyCodeScaleOut;
+			setPosition(positionDebugConsole);
+			shortcutVisible = keyCodeVisible;
+			shortcutScaleIn = keyCodeScaleIn;
+			shortcutScaleOut = keyCodeScaleOut;
 
 			notifyOnRender2D(render2D);
 			notifyOnUpdate(update);
@@ -116,16 +113,16 @@ class DebugConsole extends Trait {
 					trace("debugFloat = " + debugFloat);
 				}
 				// Shortcut - Visible
-				if (key == shortcut_visible) visible = !visible;
+				if (key == shortcutVisible) visible = !visible;
 				// Scale In
-				else if (key == shortcut_scale_in) {
+				else if (key == shortcutScaleIn) {
 					var debugScale = getScale() - 0.1;
 					if (debugScale > 0.3) {
 						setScale(debugScale);
 					}
 				}
 				// Scale Out
-				else if (key == shortcut_scale_out) {
+				else if (key == shortcutScaleOut) {
 					var debugScale = getScale() + 0.1;
 					if (debugScale < 10.0) {
 						setScale(debugScale);
@@ -181,19 +178,72 @@ class DebugConsole extends Trait {
 	}
 
 	function render2D(g: kha.graphics2.Graphics) {
-		if (!visible) return;
 		var hwin = Id.handle();
 		var htab = Id.handle({position: 0});
+
+		var avg = Math.round(frameTimeAvg * 10000) / 10;
+		fpsAvg = avg > 0 ? Math.round(1000 / avg) : 0;
+
+		totalTime += frameTime;
+		renderPathTime += iron.App.renderPathTime;
+		frames++;
+		if (totalTime > 1.0) {
+			hwin.redraws = 1;
+			var t = totalTime / frames;
+			// Second frame
+			if (frameTimeAvg > 0) {
+				if (t < frameTimeAvgMin || frameTimeAvgMin == 0) frameTimeAvgMin = t;
+				if (t > frameTimeAvgMax || frameTimeAvgMax == 0) frameTimeAvgMax = t;
+			}
+
+			frameTimeAvg = t;
+
+			if (benchmark) {
+				benchFrames++;
+				if (benchFrames > 10) benchTime += t;
+				if (benchFrames == 20) trace(Std.int((benchTime / 10) * 1000000) / 1000); // ms
+			}
+
+			renderPathTimeAvg = renderPathTime / frames;
+			updateTimeAvg = updateTime / frames;
+			animTimeAvg = animTime / frames;
+			physTimeAvg = physTime / frames;
+
+			#if arm_shadowmap_atlas
+			smaLogicTimeAvg = smaLogicTime / frames;
+			smaLogicTime = 0;
+
+			smaRenderTimeAvg = smaRenderTime / frames;
+			smaRenderTime = 0;
+			#end
+
+			totalTime = 0;
+			renderPathTime = 0;
+			updateTime = 0;
+			animTime = 0;
+			physTime = 0;
+			frames = 0;
+
+			if (htab.position == 2) {
+				g.end();
+				updateGraph(); // Profile tab selected
+				g.begin(false);
+			}
+		}
+		frameTime = Scheduler.realTime() - lastTime;
+		lastTime = Scheduler.realTime();
+
+		if (!visible) return;
 		var ww = Std.int(280 * scaleFactor * getScale());
 		// RIGHT
 		var wx = iron.App.w() - ww;
 		var wy = 0;
 		var wh = iron.App.h();
 		// Check position
-		switch (position_console) {
-			case PositionStateEnum.LEFT: wx = 0;
-			case PositionStateEnum.CENTER: wx = Math.round(iron.App.w() / 2 - ww / 2);
-			case PositionStateEnum.RIGHT: wx = iron.App.w() - ww;
+		switch (positionConsole) {
+			case PositionStateEnum.Left: wx = 0;
+			case PositionStateEnum.Center: wx = Math.round(iron.App.w() / 2 - ww / 2);
+			case PositionStateEnum.Right: wx = iron.App.w() - ww;
 		}
 
 		// var bindG = ui.windowDirty(hwin, wx, wy, ww, wh) || hwin.redraws > 0;
@@ -447,6 +497,7 @@ class DebugConsole extends Trait {
 										selectedTraits.push(t);
 									}
 								}
+								if (ui.isHovered) ui.tooltip("Open details about the trait in another window");
 							}
 							ui.unindent();
 						}
@@ -492,8 +543,6 @@ class DebugConsole extends Trait {
 				}
 			}
 
-			var avg = Math.round(frameTimeAvg * 10000) / 10;
-			var fpsAvg = avg > 0 ? Math.round(1000 / avg) : 0;
 			if (ui.tab(htab, '$avg ms')) {
 
 				if (ui.panel(Id.handle({selected: true}), "Performance")) {
@@ -830,8 +879,17 @@ class DebugConsole extends Trait {
 			}
 
 			if (watchNodes.length > 0 && ui.tab(htab, "Watch")) {
+				var lineCounter = 0;
 				for (n in watchNodes) {
-					ui.text(n.tree.object.name + "." + n.tree.name + "." + n.name + " = " + n.get(0));
+					if (ui.panel(Id.handle({selected: true}).nest(lineCounter), n.tree.object.name + "." + n.tree.name + "." + n.name + " : ")){
+						ui.indent();
+						ui.g.color = ui.t.SEPARATOR_COL;
+						ui.g.fillRect(0, ui._y, ui._windowW, ui.ELEMENT_H());
+						ui.g.color = 0xffffffff;
+						ui.text(Std.string(n.get(0)));
+						ui.unindent();
+					}
+					lineCounter++;
 				}
 			}
 
@@ -847,7 +905,7 @@ class DebugConsole extends Trait {
 			var handleWindow = handleWinTrait.nest(objectID).nest(traitIndex);
 			// This solution is not optimal, dragged windows will change their
 			// position if the selectedTraits array is changed.
-			wx -= ww + 8;
+			wx = positionConsole == PositionStateEnum.Left ? wx + ww + 8 : wx - ww - 8;
 			wy = 0;
 
 			handleWindow.redraws = 1;
@@ -901,55 +959,6 @@ class DebugConsole extends Trait {
 
 		ui.end(bindG);
 		if (bindG) g.begin(false);
-
-		totalTime += frameTime;
-		renderPathTime += iron.App.renderPathTime;
-		frames++;
-		if (totalTime > 1.0) {
-			hwin.redraws = 1;
-			var t = totalTime / frames;
-			// Second frame
-			if (frameTimeAvg > 0) {
-				if (t < frameTimeAvgMin || frameTimeAvgMin == 0) frameTimeAvgMin = t;
-				if (t > frameTimeAvgMax || frameTimeAvgMax == 0) frameTimeAvgMax = t;
-			}
-
-			frameTimeAvg = t;
-
-			if (benchmark) {
-				benchFrames++;
-				if (benchFrames > 10) benchTime += t;
-				if (benchFrames == 20) trace(Std.int((benchTime / 10) * 1000000) / 1000); // ms
-			}
-
-			renderPathTimeAvg = renderPathTime / frames;
-			updateTimeAvg = updateTime / frames;
-			animTimeAvg = animTime / frames;
-			physTimeAvg = physTime / frames;
-
-			#if arm_shadowmap_atlas
-			smaLogicTimeAvg = smaLogicTime / frames;
-			smaLogicTime = 0;
-
-			smaRenderTimeAvg = smaRenderTime / frames;
-			smaRenderTime = 0;
-			#end
-
-			totalTime = 0;
-			renderPathTime = 0;
-			updateTime = 0;
-			animTime = 0;
-			physTime = 0;
-			frames = 0;
-
-			if (htab.position == 2) {
-				g.end();
-				updateGraph(); // Profile tab selected
-				g.begin(false);
-			}
-		}
-		frameTime = Scheduler.realTime() - lastTime;
-		lastTime = Scheduler.realTime();
 	}
 
 	function update() {
@@ -987,17 +996,21 @@ class DebugConsole extends Trait {
 	}
 
 	public static function setPosition(value: PositionStateEnum) {
-		position_console = value;
+		positionConsole = value;
 	}
 
 	public static function getPosition(): PositionStateEnum {
-		return position_console;
+		return positionConsole;
+	}
+
+	public static function getFramerate(): Float {
+		return fpsAvg;
 	}
 #end
 }
 
-enum PositionStateEnum {
-	LEFT;
-	CENTER;
-	RIGHT;
+enum abstract PositionStateEnum(Int) from Int {
+	var Left;
+	var Center;
+	var Right;
 }

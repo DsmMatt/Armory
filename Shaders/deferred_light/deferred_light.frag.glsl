@@ -22,7 +22,10 @@ uniform sampler2D gbufferD;
 uniform sampler2D gbuffer0;
 uniform sampler2D gbuffer1;
 #ifdef _gbuffer2
-uniform sampler2D gbuffer2;
+	uniform sampler2D gbuffer2;
+#endif
+#ifdef _EmissionShaded
+	uniform sampler2D gbufferEmission;
 #endif
 
 #ifdef _VoxelAOvar
@@ -218,7 +221,7 @@ void main() {
 #endif
 
 #ifdef _Brdf
-	vec2 envBRDF = textureLod(senvmapBrdf, vec2(roughness, 1.0 - dotNV), 0.0).xy;
+	vec2 envBRDF = texelFetch(senvmapBrdf, ivec2(vec2(dotNV, 1.0 - roughness) * 256.0), 0).xy;
 #endif
 
 	// Envmap
@@ -256,11 +259,15 @@ void main() {
 
 	envl.rgb *= albedo;
 
+#ifdef _Brdf
+	envl.rgb *= 1.0 - (f0 * envBRDF.x + envBRDF.y); //LV: We should take refracted light into account
+#endif
+
 #ifdef _Rad // Indirect specular
-	envl.rgb += prefilteredColor * (f0 * envBRDF.x + envBRDF.y) * 1.5 * occspec.y;
+	envl.rgb += prefilteredColor * (f0 * envBRDF.x + envBRDF.y); //LV: Removed "1.5 * occspec.y". Specular should be weighted only by FV LUT
 #else
 	#ifdef _EnvCol
-	envl.rgb += backgroundCol * surfaceF0(g1.rgb, metallic); // f0
+	envl.rgb += backgroundCol * (f0 * envBRDF.x + envBRDF.y); //LV: Eh, what's the point of weighting it only by F0?
 	#endif
 #endif
 
@@ -295,11 +302,22 @@ void main() {
 	// #endif
 #endif
 
-#ifdef _Emission
-	if (matid == 1) {
-		fragColor.rgb += g1.rgb; // materialid
-		albedo = vec3(0.0);
+#ifdef _EmissionShadeless
+	if (matid == 1) { // pure emissive material, color stored in basecol
+		fragColor.rgb += g1.rgb;
+		fragColor.a = 1.0; // Mark as opaque
+		return;
 	}
+#endif
+#ifdef _EmissionShaded
+	#ifdef _EmissionShadeless
+	else {
+	#endif
+		vec3 emission = textureLod(gbufferEmission, texCoord, 0.0).rgb;
+		fragColor.rgb += emission;
+	#ifdef _EmissionShadeless
+	}
+	#endif
 #endif
 
 	// Show voxels
@@ -317,12 +335,12 @@ void main() {
 
 #ifdef _Sun
 	vec3 sh = normalize(v + sunDir);
-	float sdotNH = dot(n, sh);
-	float sdotVH = dot(v, sh);
-	float sdotNL = dot(n, sunDir);
+	float sdotNH = max(0.0, dot(n, sh));
+	float sdotVH = max(0.0, dot(v, sh));
+	float sdotNL = max(0.0, dot(n, sunDir));
 	float svisibility = 1.0;
 	vec3 sdirect = lambertDiffuseBRDF(albedo, sdotNL) +
-				   specularBRDF(f0, roughness, sdotNL, sdotNH, dotNV, sdotVH) * occspec.y;
+	               specularBRDF(f0, roughness, sdotNL, sdotNH, dotNV, sdotVH) * occspec.y;
 
 	#ifdef _ShadowMap
 		#ifdef _CSM
@@ -373,7 +391,8 @@ void main() {
 	#endif
 
 	#ifdef _MicroShadowing
-	svisibility *= sdotNL + 2.0 * occspec.x * occspec.x - 1.0;
+	// See https://advances.realtimerendering.com/other/2016/naughty_dog/NaughtyDog_TechArt_Final.pdf
+	svisibility *= clamp(sdotNL + 2.0 * occspec.x * occspec.x - 1.0, 0.0, 1.0);
 	#endif
 
 	fragColor.rgb += sdirect * svisibility * sunCol;
@@ -480,6 +499,11 @@ void main() {
 			, lightsArraySpot[li * 2].xyz // spotDir
 			, vec2(lightsArray[li * 3].w, lightsArray[li * 3 + 1].w) // scale
 			, lightsArraySpot[li * 2 + 1].xyz // right
+			#endif
+			#ifdef _VoxelAOvar
+			#ifdef _VoxelShadow
+			, voxels, voxpos
+			#endif
 			#endif
 			#ifdef _MicroShadowing
 			, occspec.x

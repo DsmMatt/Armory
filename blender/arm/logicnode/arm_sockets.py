@@ -59,6 +59,10 @@ class ArmCustomSocket(NodeSocket):
         """Called when the update() method of the corresponding node is called."""
         pass
 
+    def copy_defaults(self, socket):
+        """Called when this socket default values are to be copied to the given socket"""
+        pass
+
 
 class ArmActionSocket(ArmCustomSocket):
     bl_idname = 'ArmNodeSocketAction'
@@ -104,6 +108,10 @@ class ArmAnimActionSocket(ArmCustomSocket):
 
     def draw_color(self, context, node):
         return socket_colors[self.bl_idname]
+
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_raw = self.default_value_raw
 
 
 class ArmRotationSocket(ArmCustomSocket):
@@ -288,6 +296,17 @@ class ArmRotationSocket(ArmCustomSocket):
         update = _on_update_socket
     )
 
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_mode = self.default_value_mode
+            socket.default_value_unit = self.default_value_unit
+            socket.default_value_order = self.default_value_order
+            socket.default_value_s0 = self.default_value_s0
+            socket.default_value_s1 = self.default_value_s1
+            socket.default_value_s2 = self.default_value_s2
+            socket.default_value_s3 = self.default_value_s3
+            socket.default_value_raw = self.default_value_raw
+
 
 class ArmArraySocket(ArmCustomSocket):
     bl_idname = 'ArmNodeSocketArray'
@@ -321,6 +340,10 @@ class ArmBoolSocket(ArmCustomSocket):
     def get_default_value(self):
         return self.default_value_raw
 
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_raw = self.default_value_raw
+
 
 class ArmColorSocket(ArmCustomSocket):
     bl_idname = 'ArmColorSocket'
@@ -347,6 +370,10 @@ class ArmColorSocket(ArmCustomSocket):
     def get_default_value(self):
         return self.default_value_raw
 
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_raw = self.default_value_raw
+
 
 class ArmDynamicSocket(ArmCustomSocket):
     bl_idname = 'ArmDynamicSocket'
@@ -365,7 +392,19 @@ class ArmAnySocket(ArmCustomSocket):
     bl_label = 'Any Socket'
     arm_socket_type = 'NONE'
 
-    display_label: StringProperty()
+    # Callback function when socket label is changed
+    def on_disp_label_update(self, context):
+        node = self.node
+        if node.bl_idname == 'LNGroupInputsNode' or node.bl_idname == 'LNGroupOutputsNode':
+            if not node.invalid_link:
+                node.socket_name_update(self)
+                self.on_node_update()
+                self.name = self.display_label
+
+    display_label: StringProperty(
+        name='display_label',
+        description='Property to store socket display name',
+        update=on_disp_label_update)
 
     display_color: FloatVectorProperty(
         name='Color',
@@ -383,8 +422,6 @@ class ArmAnySocket(ArmCustomSocket):
         return self.display_color
 
     def on_node_update(self):
-        super().on_node_update()
-
         # Cache name and color of connected socket
         if self.is_output:
             c_node, c_socket = arm.node_utils.output_get_connected_node(self)
@@ -392,10 +429,10 @@ class ArmAnySocket(ArmCustomSocket):
             c_node, c_socket = arm.node_utils.input_get_connected_node(self)
 
         if c_node is None:
-            self.display_label = ''
             self.display_color = socket_colors[self.__class__.bl_idname]
         else:
-            self.display_label = c_socket.name
+            if self.display_label == '':
+                self.display_label = c_socket.name
             self.display_color = c_socket.draw_color(bpy.context, c_node)
 
 
@@ -420,6 +457,9 @@ class ArmFloatSocket(ArmCustomSocket):
     def get_default_value(self):
         return self.default_value_raw
 
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_raw = self.default_value_raw
 
 class ArmIntSocket(ArmCustomSocket):
     bl_idname = 'ArmIntSocket'
@@ -441,6 +481,9 @@ class ArmIntSocket(ArmCustomSocket):
     def get_default_value(self):
         return self.default_value_raw
 
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_raw = self.default_value_raw
 
 class ArmObjectSocket(ArmCustomSocket):
     bl_idname = 'ArmNodeSocketObject'
@@ -475,7 +518,9 @@ class ArmObjectSocket(ArmCustomSocket):
     def draw_color(self, context, node):
         return socket_colors[self.bl_idname]
 
-
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_raw = self.default_value_raw
 
 class ArmStringSocket(ArmCustomSocket):
     bl_idname = 'ArmStringSocket'
@@ -497,6 +542,9 @@ class ArmStringSocket(ArmCustomSocket):
     def get_default_value(self):
         return self.default_value_raw
 
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_raw = self.default_value_raw
 
 class ArmVectorSocket(ArmCustomSocket):
     bl_idname = 'ArmVectorSocket'
@@ -525,6 +573,9 @@ class ArmVectorSocket(ArmCustomSocket):
     def get_default_value(self):
         return self.default_value_raw
 
+    def copy_defaults(self, socket):
+        if socket.bl_idname == self.bl_idname:
+            socket.default_value_raw = self.default_value_raw
 
 def draw_socket_layout(socket: bpy.types.NodeSocket, layout: bpy.types.UILayout, prop_name='default_value_raw'):
     if not socket.is_output and not socket.is_linked:

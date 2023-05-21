@@ -23,7 +23,7 @@ else:
     arm.enable_reload(__name__)
 
 # Armory version
-arm_version = '2022.10'
+arm_version = '2023.5'
 arm_commit = '$Id$'
 
 def get_project_html5_copy(self):
@@ -105,6 +105,32 @@ def set_android_build_apk(self, value):
         wrd.arm_project_android_copy_apk = False
         wrd.arm_project_android_run_avd = False
 
+def get_win_build_arch(self):
+    if self.get('arm_project_win_build_arch', -1) == -1:
+        if arm.utils.get_os_is_windows_64():
+            return 0
+        else:
+            return 1
+    else:
+        return self.get('arm_project_win_build_arch', 'x64')
+
+def set_win_build_arch(self, value):
+    self['arm_project_win_build_arch'] = value
+
+def set_win_build(self, value):
+    if arm.utils.get_os_is_windows():
+        self['arm_project_win_build'] = value
+    else:
+        self['arm_project_win_build'] = 0
+    if (self['arm_project_win_build'] == 0) or (self['arm_project_win_build'] == 1):
+        wrd = bpy.data.worlds['Arm']
+        wrd.arm_project_win_build_open = False
+
+def get_win_build(self):
+    if arm.utils.get_os_is_windows():
+        return self.get('arm_project_win_build', 0)
+    else:
+        return 0
 
 def init_properties():
     global arm_version
@@ -184,13 +210,19 @@ def init_properties():
                ('Enabled', 'Enabled', 'Enabled'),
                ('Auto', 'Auto', 'Auto')],
         name="Zui", default='Auto', description="Include UI library", update=assets.invalidate_compiler_cache)
+    bpy.types.World.arm_network = EnumProperty(
+        items=[('Disabled', 'Disabled', 'Disabled'),
+               ('Enabled', 'Enabled', 'Enabled'),
+               ('Auto', 'Auto', 'Auto')],
+        name="Networking", default='Auto', description="Include Network library", update=assets.invalidate_compiler_cache)
     bpy.types.World.arm_audio = EnumProperty(
         items=[('Disabled', 'Disabled', 'Disabled'),
                ('Enabled', 'Enabled', 'Enabled')],
         name="Audio", default='Enabled', update=assets.invalidate_compiler_cache)
-    bpy.types.World.arm_khafile = PointerProperty(name="Khafile", description="Source appended to khafile.js", update=assets.invalidate_compiler_cache, type=bpy.types.Text)
+    bpy.types.World.arm_khafile = PointerProperty(name="Append Khafile", description="Source appended to the project's khafile.js after it is generated", update=assets.invalidate_compiler_cache, type=bpy.types.Text)
     bpy.types.World.arm_texture_quality = FloatProperty(name="Texture Quality", default=1.0, min=0.0, max=1.0, subtype='FACTOR', update=assets.invalidate_compiler_cache)
     bpy.types.World.arm_sound_quality = FloatProperty(name="Sound Quality", default=0.9, min=0.0, max=1.0, subtype='FACTOR', update=assets.invalidate_compiler_cache)
+    bpy.types.World.arm_copy_override = BoolProperty(name="Copy Override", description="Overrides any existing files when copying", default=False, update=assets.invalidate_compiled_data)
     bpy.types.World.arm_minimize = BoolProperty(name="Binary Scene Data", description="Export scene data in binary", default=True, update=assets.invalidate_compiled_data)
     bpy.types.World.arm_minify_js = BoolProperty(name="Minify JS", description="Minimize JavaScript output when publishing", default=True)
     bpy.types.World.arm_no_traces = BoolProperty(name="No Traces", description="Don't compile trace calls in the program when publishing", default=False)
@@ -212,6 +244,7 @@ def init_properties():
         name="Assertion Level", description="Ignore all assertions below this level (assertions are turned off completely for published builds)", default='Warning', update=assets.invalidate_compiler_cache)
     bpy.types.World.arm_assert_quit = BoolProperty(name="Quit On Assertion Fail", description="Whether to close the game when an 'Error' level assertion fails", default=False, update=assets.invalidate_compiler_cache)
     bpy.types.World.arm_live_patch = BoolProperty(name="Live Patch", description="Live patching for Krom", default=False)
+    bpy.types.World.arm_clear_on_compile = BoolProperty(name="Clear Console", description="Clears the system console on compile", default=False)
     bpy.types.World.arm_play_camera = EnumProperty(
         items=[('Scene', 'Scene', 'Scene'),
                ('Viewport', 'Viewport', 'Viewport')],
@@ -325,7 +358,7 @@ def init_properties():
     bpy.types.Material.arm_cast_shadow = BoolProperty(name="Cast Shadow", default=True)
     bpy.types.Material.arm_receive_shadow = BoolProperty(name="Receive Shadow", description="Requires forward render path", default=True)
     bpy.types.Material.arm_depth_read = BoolProperty(name="Read Depth", description="Allow this material to read from a depth texture which is copied from the depth buffer. The meshes using this material will be drawn after all meshes that don't read from the depth texture", default=False)
-    bpy.types.Material.arm_overlay = BoolProperty(name="Overlay", default=False)
+    bpy.types.Material.arm_overlay = BoolProperty(name="Overlay", description="Renders the material, unshaded, over other shaded materials", default=False)
     bpy.types.Material.arm_decal = BoolProperty(name="Decal", default=False)
     bpy.types.Material.arm_two_sided = BoolProperty(name="Two-Sided", description="Flip normal when drawing back-face", default=False)
     bpy.types.Material.arm_ignore_irradiance = BoolProperty(name="Ignore Irradiance", description="Ignore irradiance for material", default=False)

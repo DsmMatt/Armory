@@ -37,6 +37,7 @@ def init_categories():
     arm_nodes.add_category('Object', icon='OBJECT_DATA', section="data")
     arm_nodes.add_category('Scene', icon='SCENE_DATA', section="data")
     arm_nodes.add_category('Trait', icon='NODETREE', section="data")
+    arm_nodes.add_category('Network', icon='WORLD', section="data")
 
     arm_nodes.add_category('Animation', icon='SEQUENCE', section="motion")
     arm_nodes.add_category('Navmesh', icon='UV_VERTEXSEL', section="motion")
@@ -44,11 +45,13 @@ def init_categories():
     arm_nodes.add_category('Physics', icon='PHYSICS', section="motion")
 
     arm_nodes.add_category('Array', icon='LIGHTPROBE_GRID', section="values")
+    arm_nodes.add_category('Map', icon='SHORTDISPLAY', section="values")
     arm_nodes.add_category('Math', icon='FORCE_HARMONIC', section="values")
     arm_nodes.add_category('Random', icon='SEQ_HISTOGRAM', section="values")
     arm_nodes.add_category('String', icon='SORTALPHA', section="values")
     arm_nodes.add_category('Variable', icon='OPTIONS', section="values")
 
+    arm_nodes.add_category('Draw', icon='GREASEPENCIL', section="graphics")
     arm_nodes.add_category('Canvas', icon='RENDERLAYERS', section="graphics",
                            description="Note: To get the canvas, be sure that the node(s) and the canvas (UI) is attached to the same object.")
     arm_nodes.add_category('Postprocess', icon='FREEZE', section="graphics")

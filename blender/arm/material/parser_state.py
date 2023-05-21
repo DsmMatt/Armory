@@ -12,6 +12,7 @@ if arm.is_reload(__name__):
 else:
     arm.enable_reload(__name__)
 
+
     @unique
     class ParserContext(IntEnum):
         """Describes which kind of node tree is parsed."""
@@ -21,11 +22,34 @@ else:
         WORLD = 2
 
 
+    @unique
+    class ParserPass(IntEnum):
+        """In some situations, a node tree (or a subtree of that) needs
+        to be parsed multiple times in different contexts called _passes_.
+        Nodes can output different code in reaction to the parser state's
+        current pass; for more information on the individual passes
+        please refer to below enum items.
+        """
+        REGULAR = 0
+        """The tree is parsed to generate regular shader code."""
+
+        DX_SCREEN_SPACE = 1
+        """The tree is parsed to output shader code to compute
+        the derivative of a value with respect to the screen's x coordinate."""
+
+        DY_SCREEN_SPACE = 2
+        """The tree is parsed to output shader code to compute
+        the derivative of a value with respect to the screen's y coordinate."""
+
+
 class ParserState:
     """Dataclass to keep track of the current state while parsing a shader tree."""
+
     def __init__(self, context: ParserContext, tree_name: str, world: Optional[bpy.types.World] = None):
         self.context = context
         self.tree_name = tree_name
+
+        self.current_pass = ParserPass.REGULAR
 
         # The current world, if parsing a world node tree
         self.world = world
@@ -52,16 +76,19 @@ class ParserState:
         self.parse_displacement = True
         self.basecol_only = False
 
-        self.emission_found = False
-        self.procedurals_written = False
+        self.procedurals_written: set[Shader] = set()
+
         # Already exported radiance/irradiance (currently we can only convert
         # an already existing texture as radiance/irradiance)
         self.radiance_written = False
 
-        # TODO: document those attributes
-        self.sample_bump = False
-        self.sample_bump_res = ''
         self.normal_parsed = False
+
+        self.dxdy_varying_input_value = False
+        """Whether the result of the previously parsed node differs
+        between fragments and represents an input value to which to apply
+        dx/dy offsets (if required by the parser pass).
+        """
 
         # Shader output values
         self.out_basecol: vec3str = 'vec3(0.8)'
@@ -70,7 +97,7 @@ class ParserState:
         self.out_occlusion: floatstr = '1.0'
         self.out_specular: floatstr = '1.0'
         self.out_opacity: floatstr = '1.0'
-        self.out_emission: floatstr = '0.0'
+        self.out_emission_col: vec3str = 'vec3(0.0)'
 
     def reset_outs(self):
         """Reset the shader output values to their default values."""
@@ -80,9 +107,19 @@ class ParserState:
         self.out_occlusion = '1.0'
         self.out_specular = '1.0'
         self.out_opacity = '1.0'
-        self.out_emission = '0.0'
+        self.out_emission_col = 'vec3(0.0)'
 
-    def get_outs(self) -> Tuple[vec3str, floatstr, floatstr, floatstr, floatstr, floatstr, floatstr]:
+    def get_outs(self) -> Tuple[vec3str, floatstr, floatstr, floatstr, floatstr, floatstr, vec3str]:
         """Return the shader output values as a tuple."""
         return (self.out_basecol, self.out_roughness, self.out_metallic, self.out_occlusion, self.out_specular,
-                self.out_opacity, self.out_emission)
+                self.out_opacity, self.out_emission_col)
+
+    def get_parser_pass_suffix(self) -> str:
+        """Return a suffix for the current parser pass that can be appended
+        to shader variables to avoid compilation errors due to redefinitions.
+        """
+        if self.current_pass == ParserPass.DX_SCREEN_SPACE:
+            return '_dx'
+        elif self.current_pass == ParserPass.DY_SCREEN_SPACE:
+            return '_dy'
+        return ''

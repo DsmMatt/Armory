@@ -49,18 +49,6 @@ def iter_nodes_by_type(node_group: bpy.types.NodeTree, ntype: str) -> Generator[
             yield node
 
 
-def get_node_armorypbr(node_group: bpy.types.NodeTree) -> bpy.types.Node:
-    for node in node_group.nodes:
-        if node.type == 'GROUP' and node.node_tree.name.startswith('Armory PBR'):
-            return node
-
-
-def iter_nodes_armorypbr(node_group: bpy.types.NodeTree) -> Generator[bpy.types.Node, None, None]:
-    for node in node_group.nodes:
-        if node.type == 'GROUP' and node.node_tree.name.startswith('Armory PBR'):
-            yield node
-
-
 def input_get_connected_node(input_socket: bpy.types.NodeSocket) -> tuple[Optional[bpy.types.Node], Optional[bpy.types.NodeSocket]]:
     """Get the node and the output socket of that node that is connected
     to the given input, while following reroutes. If the input has
@@ -152,8 +140,7 @@ def get_export_tree_name(tree: bpy.types.NodeTree, do_warn=False) -> str:
     export_name = arm.utils.safesrc(tree.name[0].upper() + tree.name[1:])
 
     if export_name != tree.name:
-        arm.log.warn('Logic node tree and generated trait names differ! Node'
-                     f' tree: "{tree.name}", trait: "{export_name}"')
+        arm.log.warn(f'The logic node tree "{tree.name}" had to be temporarily renamed to "{export_name}" on export due to Haxe limitations. Referencing the corresponding trait by its logic node tree name may not work as expected.')
 
     return export_name
 
